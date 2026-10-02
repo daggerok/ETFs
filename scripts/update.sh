@@ -17,7 +17,7 @@ Usage: ./scripts/update.sh [options] [repo ...]
                               ./scripts/update.sh VanEck,Tema SPDR      (names are case-insensitive)
 
 Options:
-  -p, --parallel N          number of repos updated in parallel (default 4)
+  -p, --parallel N          number of repos updated in parallel (default 1)
   -h, --help                show this help
 
 Clone missing repos first with ./scripts/install.sh
@@ -27,7 +27,7 @@ USAGE
 die() { echo "update.sh: $*" >&2; exit 2; }
 is_number() { case "$1" in ''|*[!0-9]*|0) return 1 ;; *) return 0 ;; esac; }
 
-JOBS=4
+JOBS=1
 SELECTED=()
 while [ $# -gt 0 ]; do
   case "$1" in

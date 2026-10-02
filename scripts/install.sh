@@ -21,7 +21,7 @@ Usage: ./scripts/install.sh [options] [repo ...]
 
 Options:
   -s, --ssh                 clone over SSH (git@github.com:$OWNER/...) instead of HTTPS (also: -ssh)
-  -p, --parallel N          number of parallel clones (default 4)
+  -p, --parallel N          number of parallel clones (default 1)
   -d, --depth N             shallow clone with N commits of history (default: normal full clone),
                             e.g. --depth 1 is the fastest and smallest way to just run the app
   -h, --help                show this help
@@ -35,7 +35,7 @@ die() { echo "install.sh: $*" >&2; exit 2; }
 is_number() { case "$1" in ''|*[!0-9]*|0) return 1 ;; *) return 0 ;; esac; }
 
 USE_SSH=0
-JOBS=4
+JOBS=1
 DEPTH=""
 SELECTED=()
 
