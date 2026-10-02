@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Stop the server started by ./scripts/start.sh (the whole process tree behind the pid file in the OS temp directory)
+# Stop the server started by ./scripts/start.sh (the whole process tree behind the pid file in the hub .tmp folder)
 
 set -uo pipefail
 cd "$(dirname "$0")/.." || exit 1
 
-# same OS temp folder as start.sh (unique per hub checkout)
-STATE_DIR="${TMPDIR:-/tmp}"; STATE_DIR="${STATE_DIR%/}/etfs-hub-$(pwd -P | cksum | cut -d' ' -f1)"
+# same git-ignored .tmp folder as start.sh
+STATE_DIR="$(pwd)/.tmp"
 PID_FILE="$STATE_DIR/.etfs.pid"; LOG_FILE="$STATE_DIR/.etfs.log"
 
 case "${1:-}" in
@@ -27,4 +27,4 @@ if kill -0 "$pid" 2>/dev/null; then
 else
   echo "not running (stale pid file removed)"
 fi
-rm -f "$PID_FILE" "$LOG_FILE"; rmdir "$STATE_DIR" 2>/dev/null || true
+rm -f "$PID_FILE" "$LOG_FILE"

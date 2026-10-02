@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # Run the hub locally in the background: bunx serve . -p PORT  ->  http://localhost:PORT
-# The process id and the output are kept in the OS temp directory (one folder per hub checkout, see
-# STATE_DIR below), never in the repository; stop it with ./scripts/stop.sh
+# The process id and the output are kept in the git-ignored .tmp folder of the hub (.etfs.pid, .etfs.log);
+# stop it with ./scripts/stop.sh
 
 set -uo pipefail
 cd "$(dirname "$0")/.." || exit 1
 
-# server state lives in the OS temp directory, in a folder unique to this hub checkout
-STATE_DIR="${TMPDIR:-/tmp}"; STATE_DIR="${STATE_DIR%/}/etfs-hub-$(pwd -P | cksum | cut -d' ' -f1)"
+# server state lives in the git-ignored .tmp folder of the hub
+STATE_DIR="$(pwd)/.tmp"
 PID_FILE="$STATE_DIR/.etfs.pid"; LOG_FILE="$STATE_DIR/.etfs.log"
 
 usage() {
