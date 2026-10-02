@@ -508,12 +508,24 @@ function resolveApiMode(): 'remote' | 'local' {
 }
 
 const API_MODE = resolveApiMode();
+// Fallback to GitHub Pages applies only to the automatic local mode, never to an explicit ?api=local.
+const LOCAL_FALLBACK = API_MODE === 'local' && !/(^|[?&])api=local(&|$)/.test(location.search);
+
+// Brands served from GitHub Pages although the page runs in local mode (the
+// sibling folder is missing, e.g. after `bunx degit daggerok/ETFs`). Remembered
+// per brand so its per-fund files use the base that worked.
+const remoteFallback = new Set<string>();
+
+function remoteBase(brand: Brand): string {
+  return `${GITHUB_PAGES_ORIGIN}${encodeURIComponent(brand.repo)}/api/${brand.slug}/`;
+}
+
+function localBase(brand: Brand): string {
+  return `./${encodeURIComponent(brand.repo)}/api/${brand.slug}/`;
+}
 
 function brandBase(brand: Brand): string {
-  const repo = encodeURIComponent(brand.repo);
-  return API_MODE === 'remote'
-    ? `${GITHUB_PAGES_ORIGIN}${repo}/api/${brand.slug}/`
-    : `./${repo}/api/${brand.slug}/`;
+  return API_MODE === 'remote' || remoteFallback.has(brand.repo) ? remoteBase(brand) : localBase(brand);
 }
 
 async function fetchJson(url: string, timeoutMs = 0): Promise<any> {
@@ -729,10 +741,11 @@ function loadedBrandCount(): number {
 function renderLoadProgress(): void {
   const failed = brandStatus.map((status, i) => (status === 'error' ? i : -1)).filter(i => i >= 0);
   const cachedOnly = brandStatus.filter(status => status === 'cached').length;
+  const fromPages = API_MODE === 'local' ? remoteFallback.size : 0;
   if (state.loading) {
     el.loadProgress.textContent = `Loading brand feeds ${state.loadDone}/${BRANDS.length}${store ? ` · ${store.n.toLocaleString('en-US')} ETFs so far` : ''}…`;
   } else {
-    el.loadProgress.textContent = `${loadedBrandCount()} of ${BRANDS.length} brands loaded${cachedOnly ? ` (${cachedOnly} from cache only)` : ''}${failed.length ? ` · ${failed.length} unavailable` : ''}`;
+    el.loadProgress.textContent = `${loadedBrandCount()} of ${BRANDS.length} brands loaded${cachedOnly ? ` (${cachedOnly} from cache only)` : ''}${fromPages ? ` · ${fromPages} remote (github.io)` : ''}${failed.length ? ` · ${failed.length} unavailable` : ''}`;
   }
   el.brandWarning.hidden = failed.length === 0;
   if (failed.length) {
@@ -760,6 +773,7 @@ async function loadCatalog(): Promise<void> {
       brandFunds[i] = record.data.funds;
       brandGeneratedAt[i] = record.generatedAt || record.data.generatedAt || null;
       brandStatus[i] = 'cached';
+      if (API_MODE === 'local' && record.remote === true) remoteFallback.add(BRANDS[i].repo);
       anyCached = true;
     }
   });
@@ -797,13 +811,30 @@ async function loadCatalog(): Promise<void> {
 async function loadBrandIndex(i: number, record: any): Promise<void> {
   const brand = BRANDS[i];
   try {
-    const data = await fetchJson(`${brandBase(brand)}index.json`, BRAND_TIMEOUT_MS);
-    if (!data || !Array.isArray(data.funds)) throw new Error('malformed index.json');
+    let data: any = null;
+    const readIndex = async (base: string): Promise<any> => {
+      const loaded = await fetchJson(`${base}index.json`, BRAND_TIMEOUT_MS);
+      if (!loaded || !Array.isArray(loaded.funds)) throw new Error('malformed index.json');
+      return loaded;
+    };
+    if (API_MODE === 'remote') {
+      data = await readIndex(remoteBase(brand));
+    } else {
+      try {
+        data = await readIndex(localBase(brand));
+        remoteFallback.delete(brand.repo);
+      } catch (localError) {
+        // ?api=local stays strict; the default local mode falls back to GitHub Pages per brand.
+        if (!LOCAL_FALLBACK) throw localError;
+        data = await readIndex(remoteBase(brand));
+        remoteFallback.add(brand.repo);
+      }
+    }
     const unchanged = Boolean(record && record.generatedAt && record.generatedAt === data.generatedAt && brandFunds[i].length);
     if (!unchanged) {
       brandFunds[i] = data.funds;
       brandGeneratedAt[i] = data.generatedAt || null;
-      void idbPut(cacheKey(i), { generatedAt: data.generatedAt || null, savedAt: Date.now(), data });
+      void idbPut(cacheKey(i), { generatedAt: data.generatedAt || null, savedAt: Date.now(), remote: remoteFallback.has(brand.repo), data });
       scheduleRebuild();
     }
     brandStatus[i] = 'ok';
@@ -994,8 +1025,8 @@ async function ensureHoldingsForSelection(): Promise<void> {
   });
   await Promise.all(workers);
   if (state.selected.size > 0) {
+    renderTabs();
     if (state.activeTab === 'watchlist') renderWatchlistTable();
-    else renderTabs();
   }
 }
 
@@ -1004,7 +1035,7 @@ function scheduleWatchlistRefresh(): void {
   if (watchlistRefreshTimer !== null) return;
   watchlistRefreshTimer = setTimeout(() => {
     watchlistRefreshTimer = null;
-    if (state.activeTab === 'watchlist') renderWatchlistTable();
+    if (state.activeTab === 'watchlist') { renderTabs(); renderWatchlistTable(); }
   }, 150);
 }
 
@@ -1385,7 +1416,7 @@ function renderFilters(): void {
 
 function renderBrandList(): void {
   const sig = [
-    brandStatus.join(','), brandFunds.map(list => list.length).join(','), hiddenBrandsSig(),
+    brandStatus.join(','), brandFunds.map(list => list.length).join(','), hiddenBrandsSig(), [...remoteFallback].join(','),
   ].join('|');
   if (sig === brandListSig) return;
   brandListSig = sig;
@@ -1398,11 +1429,14 @@ function renderBrandList(): void {
         : status === 'pending'
           ? '<span class="text-[0.65rem] text-slate-400">loading…</span>'
           : '';
+    const remoteBadge = API_MODE === 'local' && remoteFallback.has(brand.repo)
+      ? '<span class="text-[0.65rem] px-1.5 py-0.5 rounded-full bg-sky-100 dark:bg-sky-900/30 text-sky-700 dark:text-sky-300 border border-sky-200 dark:border-sky-700/50" title="Sibling folder not found locally; served from GitHub Pages">remote</span>'
+      : '';
     return `
       <label class="flex items-center gap-2 px-1.5 py-1 rounded hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer text-sm">
         <input type="checkbox" data-brand="${escapeHtml(brand.repo)}" ${state.hiddenBrands.has(brand.repo) ? '' : 'checked'} class="w-4 h-4 accent-blue-600 cursor-pointer" />
         <span class="flex-1 truncate text-slate-700 dark:text-slate-200">${escapeHtml(brand.brand)}</span>
-        ${badge}
+        ${remoteBadge}${badge}
         <span class="font-mono text-xs text-slate-400">${brandFunds[i].length}</span>
       </label>`;
   }).join('');
@@ -2228,7 +2262,7 @@ function renderSubtitleDetails(text?: string): void {
   const total = store ? store.n : 0;
   const modeText = API_MODE === 'remote'
     ? `read from each brand's GitHub Pages (${GITHUB_PAGES_ORIGIN}&lt;Repo&gt;/api/&lt;slug&gt;/)`
-    : 'read from the sibling folders next to this page (./&lt;Repo&gt;/api/&lt;slug&gt;/)';
+    : 'read from the sibling folders next to this page (./&lt;Repo&gt;/api/&lt;slug&gt;/), falling back to GitHub Pages per brand when a folder is missing';
   const brandLinks = BRANDS.map((brand, i) => {
     const mark = brandStatus[i] === 'error' ? ' (unavailable)' : '';
     return `<a href="${GITHUB_PAGES_ORIGIN}${encodeURIComponent(brand.repo)}/" target="_blank" rel="noopener noreferrer" class="text-blue-600 dark:text-blue-400 hover:underline" title="${escapeHtml(brand.brand)} app (GitHub Pages)">${escapeHtml(brand.brand)}</a>${mark} <a href="https://github.com/daggerok/${encodeURIComponent(brand.repo)}" target="_blank" rel="noopener noreferrer" class="text-slate-400 hover:underline" title="${escapeHtml(brand.repo)} repository">[repo]</a>`;
