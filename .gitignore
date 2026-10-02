@@ -1,0 +1,14 @@
+# Every sibling ETF repo (AAM, ARK, ..., iShares) is its own git repository in a subfolder.
+# Ignore ALL top-level folders so the hub repo never tracks or embeds them.
+# Their own .git folders keep working exactly as before (commit, push, pull, branches).
+/*/
+
+# ...except what belongs to the hub repo itself (add new hub folders here, e.g. !/assets/)
+!/.github/
+!/.claude/
+
+# local noise
+.idea/
+.DS_Store
+node_modules/
+.claude/settings.local.json
