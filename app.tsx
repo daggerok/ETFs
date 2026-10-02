@@ -1544,7 +1544,7 @@ const DD_TICK = '<svg viewBox="0 0 16 16" width="12" height="12" fill="none" str
 
 /**
  * Accessible multi-select popover. Layout, top to bottom: search field (first
- * line, autofocused), bulk actions (Select all / Clear / Toggle all / Reset),
+ * line, autofocused), bulk actions (All / Clear / Toggle / Reset),
  * counts + "Selected only", the scrollable option list. The selection lives in
  * the owner's state and is independent of the search text: the search only
  * decides which rows are visible, bulk actions touch only the visible rows and
@@ -1570,9 +1570,9 @@ function createDropdown(cfg: DropdownConfig): Dropdown {
       <button type="button" class="dd-close" aria-label="Close ${escapeHtml(cfg.title)}">✕</button>
     </div>
     <div class="dd-actions" role="group" aria-label="Bulk actions for the shown ${escapeHtml(cfg.noun)}">
-      <button type="button" class="dd-act" data-act="all" title="Select every shown row (Ctrl/Cmd+A)">Select all</button>
+      <button type="button" class="dd-act" data-act="all" title="Select every shown row (Ctrl/Cmd+A)">All</button>
       <button type="button" class="dd-act" data-act="none" title="Deselect every shown row">Clear</button>
-      <button type="button" class="dd-act" data-act="toggle" title="Invert the selection of the shown rows">Toggle all</button>
+      <button type="button" class="dd-act" data-act="toggle" title="Invert the selection of the shown rows">Toggle</button>
       <button type="button" class="dd-act" data-act="reset" title="Back to the default: everything selected, whatever the search">Reset</button>
     </div>
     <div class="dd-meta">
