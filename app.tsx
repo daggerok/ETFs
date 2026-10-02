@@ -1582,7 +1582,9 @@ function createDropdown(cfg: DropdownConfig): Dropdown {
     <div class="dd-list themed-scroll" id="${uid}-list" tabindex="-1" role="listbox" aria-multiselectable="true" aria-label="${escapeHtml(cfg.title)}"></div>`;
   const backdrop = document.createElement('div');
   backdrop.className = 'dd-backdrop';
-  panel.parentNode.insertBefore(backdrop, panel);
+  // Portal both to <body>: no ancestor stacking context or overflow can cover or clip the popover.
+  document.body.appendChild(backdrop);
+  document.body.appendChild(panel);
   const input: any = panel.querySelector('.dd-input');
   const list: any = panel.querySelector('.dd-list');
   const count: any = panel.querySelector('.dd-count');
@@ -1664,11 +1666,27 @@ function createDropdown(cfg: DropdownConfig): Dropdown {
   }
 
   function place(): void {
-    if (window.matchMedia('(max-width: 639px)').matches) { panel.style.left = ''; return; }
-    panel.style.left = '0px';
-    const rect = panel.getBoundingClientRect();
-    const overflow = rect.right - (window.innerWidth - 12);
-    if (overflow > 0) panel.style.left = `${-Math.min(overflow, rect.left - 12)}px`;
+    panel.style.left = '';
+    panel.style.top = '';
+    panel.style.bottom = '';
+    panel.style.maxHeight = '';
+    if (window.matchMedia('(max-width: 639px)').matches) return; // bottom sheet, positioned by CSS
+    const rect = trigger.getBoundingClientRect();
+    const width = panel.offsetWidth;
+    const natural = panel.offsetHeight;
+    const below = window.innerHeight - rect.bottom - 16;
+    const above = rect.top - 16;
+    const flip = below < Math.min(natural, 360) && above > below;
+    panel.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - width - 8))}px`;
+    panel.style.maxHeight = `${Math.max(180, flip ? above : below) - 8}px`;
+    if (flip) {
+      panel.style.top = 'auto';
+      panel.style.bottom = `${window.innerHeight - rect.top + 8}px`;
+      panel.style.transformOrigin = 'bottom left';
+    } else {
+      panel.style.top = `${rect.bottom + 8}px`;
+      panel.style.transformOrigin = 'top left';
+    }
   }
 
   function open(initialQuery = ''): void {
@@ -1780,8 +1798,107 @@ function createDropdown(cfg: DropdownConfig): Dropdown {
     if (isOpen && !inRoot(event.target)) close();
   });
   window.addEventListener('resize', () => { if (isOpen) place(); });
+  window.addEventListener('scroll', () => { if (isOpen) place(); }, { passive: true, capture: true });
+  // The panel lives at the end of <body>, so Tab at its edges hands focus back to the page order around the trigger.
+  panel.addEventListener('keydown', (event: any) => {
+    if (event.key !== 'Tab') return;
+    const focusable = [...panel.querySelectorAll('input, button')].filter((node: any) => node.tabIndex >= 0 && node.offsetParent !== null);
+    if (!focusable.length) return;
+    const edge = event.shiftKey ? focusable[0] : focusable[focusable.length - 1];
+    if (event.target !== edge) return;
+    event.preventDefault();
+    close();
+    if (event.shiftKey) { trigger.focus({ preventScroll: true }); return; }
+    const page = [...document.querySelectorAll('a[href], button, input, select, textarea, [tabindex]')]
+      .filter((node: any) => !panel.contains(node) && node.tabIndex >= 0 && !node.disabled && (node.offsetParent !== null || node === trigger));
+    const next: any = page[page.indexOf(trigger) + 1];
+    if (next) next.focus();
+  });
 
   return { refresh, open, close, isOpen: () => isOpen };
+}
+
+// ---- one custom tooltip for the whole app (top layer) -------------------------
+
+/**
+ * Replaces native `title` tooltips (which the layout can neither style nor keep
+ * above popovers) with a single fixed element appended to <body> and sitting at
+ * the highest z-index. Works by delegation, so rows and headers that re-render
+ * need no wiring: on first hover or keyboard focus a `title` moves to `data-tip`
+ * (and becomes the aria-label of an icon-only control). Shown after a short
+ * hover delay or immediately on keyboard focus, flipped above the element when
+ * there is no room below, clamped to the viewport, hidden on Esc, scroll or press.
+ */
+function initTooltips(): void {
+  const tip = document.createElement('div');
+  tip.id = 'hub-tooltip';
+  tip.className = 'hub-tip';
+  tip.setAttribute('role', 'tooltip');
+  document.body.appendChild(tip);
+  let current: any = null;
+  let timer: any = 0;
+  let pointerX = 0;
+
+  const textOf = (node: any): string => {
+    const title = node.getAttribute('title');
+    if (title) {
+      node.setAttribute('data-tip', title);
+      node.removeAttribute('title');
+      if (!node.hasAttribute('aria-label') && !(node.textContent || '').trim()) node.setAttribute('aria-label', title);
+    }
+    return node.getAttribute('data-tip') || '';
+  };
+  const targetOf = (node: any): any => (node && typeof node.closest === 'function' ? node.closest('[title], [data-tip]') : null);
+
+  function hide(): void {
+    clearTimeout(timer);
+    if (current) current.removeAttribute('aria-describedby');
+    current = null;
+    tip.classList.remove('is-open');
+  }
+
+  function show(node: any): void {
+    const text = textOf(node);
+    if (!text || !document.contains(node)) { hide(); return; }
+    current = node;
+    node.setAttribute('aria-describedby', 'hub-tooltip');
+    tip.textContent = text;
+    tip.style.left = '0px';
+    tip.style.top = '0px';
+    const rect = node.getBoundingClientRect();
+    const width = tip.offsetWidth;
+    const height = tip.offsetHeight;
+    const anchor = rect.width > 240 && pointerX >= rect.left && pointerX <= rect.right ? pointerX : rect.left + rect.width / 2;
+    const left = Math.max(8, Math.min(anchor - width / 2, window.innerWidth - width - 8));
+    let top = rect.bottom + 8;
+    if (top + height > window.innerHeight - 8) top = rect.top - height - 8;
+    tip.style.left = `${left}px`;
+    tip.style.top = `${Math.max(8, top)}px`;
+    tip.classList.add('is-open');
+  }
+
+  document.addEventListener('pointerover', (event: any) => {
+    if (event.pointerType === 'touch') return;
+    pointerX = event.clientX;
+    const node = targetOf(event.target);
+    if (node === current && tip.classList.contains('is-open')) return;
+    hide();
+    if (node) { textOf(node); timer = setTimeout(() => show(node), 350); }
+  });
+  document.addEventListener('pointerout', (event: any) => {
+    if (current && !current.contains(event.relatedTarget)) hide();
+    else if (!current) clearTimeout(timer);
+  });
+  document.addEventListener('focusin', (event: any) => {
+    const node = targetOf(event.target);
+    if (node && typeof node.matches === 'function' && node.matches(':focus-visible')) { hide(); show(node); }
+  });
+  document.addEventListener('focusout', hide);
+  document.addEventListener('keydown', (event: any) => { if (event.key === 'Escape') hide(); });
+  document.addEventListener('pointerdown', hide);
+  // A scroll hides an open tooltip but must not cancel one still waiting for its hover delay (layout code scrolls on its own).
+  window.addEventListener('scroll', () => { if (tip.classList.contains('is-open')) hide(); }, { passive: true, capture: true });
+  window.addEventListener('resize', hide);
 }
 
 // ---- facet suggestions under the main search input ---------------------------
@@ -3187,6 +3304,7 @@ function bindEvents(): void {
   });
   el.blacklistClearBtn.addEventListener('click', clearBlacklist);
 
+  initTooltips();
   initSearchSuggest();
 
   // Filters bar: brand and category multi-select popovers, hide stale returns.

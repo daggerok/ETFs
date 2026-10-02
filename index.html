@@ -152,6 +152,11 @@
 
     /* Hub additions: filters bar, filter dropdowns (brands, category), source badges */
     .dd-root{position:relative}
+    /* Custom tooltip: one fixed element in <body>, above every other layer of the app */
+    .hub-tip{position:fixed;left:0;top:0;z-index:2147483000;max-width:min(22rem,calc(100vw - 16px));padding:.4rem .6rem;border-radius:.5rem;background:#0f172a;color:#f8fafc;border:1px solid #1e293b;font-size:.75rem;line-height:1.4;font-weight:500;white-space:pre-line;overflow-wrap:anywhere;box-shadow:0 8px 24px rgb(15 23 42 / .28);pointer-events:none;opacity:0;visibility:hidden;transition:opacity .12s ease,visibility 0s .12s}
+    .hub-tip.is-open{opacity:1;visibility:visible;transition:opacity .12s ease}
+    .dark .hub-tip{background:#1e293b;color:#f1f5f9;border-color:#475569;box-shadow:0 8px 24px rgb(0 0 0 / .5)}
+    @media (prefers-reduced-motion:reduce){.hub-tip,.hub-tip.is-open{transition:none}}
     .dd-trigger{display:inline-flex;align-items:center;gap:.4rem;min-height:2.375rem;max-width:100%;padding:.5rem .75rem;border-radius:.5rem;border:1px solid #e2e8f0;background:#fff;color:#334155;font-size:.875rem;line-height:1.25rem;font-weight:500;cursor:pointer;transition:background-color .15s,border-color .15s,box-shadow .15s,color .15s}
     .dd-trigger:hover{background:#f8fafc;border-color:#cbd5e1}
     .dd-trigger:focus{outline:none}
@@ -175,7 +180,7 @@
     .dark .dd-trigger.is-filtered .dd-label,.dark .dd-trigger.is-filtered .dd-chev{color:#60a5fa}
     .dark .dd-badge{background:rgba(59,130,246,.2);color:#93c5fd;border-color:rgba(59,130,246,.4)}
 
-    .dd-panel{position:absolute;left:0;top:100%;margin-top:.5rem;z-index:60;display:flex;flex-direction:column;width:21rem;max-width:calc(100vw - 2rem);background:#fff;border:1px solid #e2e8f0;border-radius:.75rem;box-shadow:0 12px 30px rgb(15 23 42 / .16),0 2px 6px rgb(15 23 42 / .06);overflow:hidden;opacity:0;transform:translateY(-4px) scale(.98);transform-origin:top left;transition:opacity .14s ease,transform .14s ease}
+    .dd-panel{position:fixed;left:0;top:0;z-index:1000;display:flex;flex-direction:column;width:21rem;max-width:calc(100vw - 2rem);background:#fff;border:1px solid #e2e8f0;border-radius:.75rem;box-shadow:0 12px 30px rgb(15 23 42 / .16),0 2px 6px rgb(15 23 42 / .06);overflow:hidden;opacity:0;transform:translateY(-4px) scale(.98);transform-origin:top left;transition:opacity .14s ease,transform .14s ease}
     .dd-panel.dd-panel-wide{width:23rem}
     .dd-panel[hidden]{display:none}
     .dd-panel.is-open{opacity:1;transform:none}
@@ -236,7 +241,7 @@
     .dark .dd-act{background:#0f172a;border-color:#334155;color:#e2e8f0}
     .dark .dd-act:hover{background:#1e293b;border-color:#475569}
     @media (max-width:639px){
-      .dd-backdrop{position:fixed;inset:0;z-index:59;background:rgba(2,6,23,.45);opacity:0;transition:opacity .2s ease}
+      .dd-backdrop{position:fixed;inset:0;z-index:999;background:rgba(2,6,23,.45);opacity:0;transition:opacity .2s ease}
       .dd-backdrop.is-open{display:block;opacity:1}
       .dd-panel,.dd-panel.dd-panel-wide{position:fixed;left:0;right:0;bottom:0;top:auto;margin:0;width:auto;max-width:none;max-height:82vh;max-height:82dvh;border-radius:1rem 1rem 0 0;border-width:1px 0 0;transform:translateY(100%);transform-origin:bottom;transition:opacity .2s ease,transform .24s cubic-bezier(.2,.8,.2,1);padding-bottom:env(safe-area-inset-bottom)}
       .dd-panel.is-open{transform:none}
@@ -282,7 +287,7 @@
     #ticker-count:focus-visible { outline: 2px solid #3b82f6; outline-offset: 3px; }
     #app-summary[hidden] { display: none; }
     #app-summary {
-      box-sizing: border-box; position: fixed; z-index: 100; display: block;
+      box-sizing: border-box; position: fixed; z-index: 1100; display: block;
       width: min(42rem, calc(100vw - 2rem)); max-height: min(70vh, 32rem);
       overflow: auto; overflow-wrap: anywhere; padding: 1rem;
       border: 1px solid #cbd5e1; border-radius: .75rem;
@@ -427,6 +432,7 @@
       const trigger = document.getElementById('ticker-count');
       const panel = document.getElementById('app-summary');
       if (!trigger || !panel) return;
+      document.body.appendChild(panel); // top layer: the header's stacking context must not put it under later panels
       let pinned = false;
       let closeTimer;
       const position = () => {
