@@ -17,9 +17,9 @@ The app is live at <https://daggerok.github.io/ETFs/> (GitHub Pages, deployed fr
 
 - no arguments clones all of them with full history; `--depth 1` (`-d 1`) is the fastest and smallest way to just run the app
 - repositories can be listed positionally, separated by spaces and/or commas, case-insensitive: `./scripts/install.sh VanEck Tema` or `./scripts/install.sh VanEck,Tema`
-- `-s` / `--ssh` clones over SSH instead of HTTPS, `-p N` / `--parallel N` sets the parallel clones (default 4), `-h` / `--help` prints the usage
+- `-s` / `--ssh` clones over SSH instead of HTTPS, `-p N` / `--parallel N` sets the parallel clones (default 1), `-h` / `--help` prints the usage
 
-`./scripts/update.sh` fetches and fast-forwards `main` of every cloned repository to get fresh data. It takes the same style of arguments: no arguments updates every cloned repository, repositories can be listed positionally (`./scripts/update.sh VanEck Tema` or `VanEck,Tema`), `-p N` / `--parallel N` sets how many are updated in parallel (default 4) and `-h` / `--help` prints the usage. Output is printed per repository as one block and the exit code is non-zero if any repository failed. Both scripts resolve the hub root from their own location, so they work from any working directory
+`./scripts/update.sh` fetches and fast-forwards `main` of every cloned repository to get fresh data. It takes the same style of arguments: no arguments updates every cloned repository, repositories can be listed positionally (`./scripts/update.sh VanEck Tema` or `VanEck,Tema`), `-p N` / `--parallel N` sets how many are updated in parallel (default 1) and `-h` / `--help` prints the usage. Output is printed per repository as one block and the exit code is non-zero if any repository failed. Both scripts resolve the hub root from their own location, so they work from any working directory
 
 Every cloned repository stays an independent git repository, so you can develop, commit and open pull requests in any of them separately
 
