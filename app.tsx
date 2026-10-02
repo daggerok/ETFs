@@ -795,8 +795,15 @@ function renderLoadProgress(): void {
   if (state.loading) {
     el.loadProgress.textContent = `Loading brand feeds ${state.loadDone}/${BRANDS.length}${store ? ` · ${store.n.toLocaleString('en-US')} ETFs so far` : ''}…`;
   } else {
-    el.loadProgress.textContent = `${loadedBrandCount()} of ${BRANDS.length} brands loaded${cachedOnly ? ` (${cachedOnly} from cache only)` : ''}${fromPages ? ` · ${fromPages} remote (github.io)` : ''}${failed.length ? ` · ${failed.length} unavailable` : ''}`;
+    // the Brands dropdown already says 'Brands: 29 of 29': only report what is worth knowing
+    const parts: string[] = [];
+    if (loadedBrandCount() < BRANDS.length) parts.push(`${loadedBrandCount()} of ${BRANDS.length} brands loaded`);
+    if (cachedOnly) parts.push(`${cachedOnly} from cache only`);
+    if (fromPages) parts.push(`${fromPages} remote (github.io)`);
+    if (failed.length) parts.push(`${failed.length} unavailable`);
+    el.loadProgress.textContent = parts.join(' · ');
   }
+  el.loadProgress.hidden = !el.loadProgress.textContent;
   el.brandWarning.hidden = failed.length === 0;
   if (failed.length) {
     el.brandWarning.textContent = `${failed.length} brand${failed.length === 1 ? '' : 's'} unavailable`;
