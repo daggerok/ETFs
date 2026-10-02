@@ -106,7 +106,7 @@
     "issuerUrl": "https://www.invesco.com/us/en/financial-products/etfs.html",
     "githubUrl": "https://github.com/daggerok/Invesco",
     "pagesUrl": "https://daggerok.github.io/Invesco/",
-    "source": "invesco.com CSV downloads + Yahoo Finance",
+    "source": "invesco.com fund pages and sitemap + official Invesco fund API (monthly returns, NAV, AUM, yields, daily holdings, expense ratio) + SEC EDGAR N-PORT-P holdings fallback + Yahoo Finance history/dividends",
     "pagesPending": false
   },
   {
