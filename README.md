@@ -30,7 +30,7 @@ bunx serve . -p 1234
 
 `./scripts/clean.sh` removes the cloned sibling repositories again (all of them, or only the listed ones: `./scripts/clean.sh VanEck Tema` or `VanEck,Tema`; `-p N` / `--parallel N`, default 1). A repository with uncommitted changes, unpushed commits or stash entries is never removed: it is kept with a message, so no work is lost. Only the known ETF repositories are touched, never the hub files.
 
-All of this is also available through `make` (run `make help`): `make install` (checks that git is installed and fails if it is not, installs bun with the official script when it is missing, runs `bun i -E`, then clones the repositories), `make start` (runs `bunx serve . -p 1234` in the background, `PORT=` changes the port), `make stop` (stops that server), `make update` and `make clean`. The variables are `REPOS` (spaces and/or commas), `PARALLEL`, and for install `DEPTH` and `SSH=1`, for example `make install DEPTH=1`, `make install REPOS=VanEck,Tema SSH=1`, `make start PORT=8080`, `make update PARALLEL=4`, `make clean REPOS=Tema`.
+`./scripts/install.sh` first checks that git is installed (it fails if it is not), installs bun with the official script when bun is missing, runs `bun i -E` for the hub packages and then clones the repositories. `./scripts/start.sh` runs `bunx serve . -p 1234` in the background (`-p N` / `--port N` changes the port) and prints the URL, `./scripts/stop.sh` stops that server.
 
 ### Data sources
 

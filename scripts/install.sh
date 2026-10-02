@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
-# Clone the sibling ETF repos into the hub folder (the parent of scripts/), so the hub app works
-# locally with all the data:  bunx serve . -p 1234  ->  http://localhost:1234
+# Install the hub tooling and clone the sibling ETF repos into the hub folder (the parent of scripts/), so
+# the hub app works locally with all the data. Order: git must exist (fails without it), bun is installed
+# with the official script when missing, bun i -E installs the hub packages, then the repos are cloned.
+# Run it with ./scripts/start.sh  ->  http://localhost:1234
 # Safe to re-run: repos that are already cloned are skipped, nothing existing is touched.
 
 set -uo pipefail
@@ -60,7 +62,6 @@ done
 
 is_number "$JOBS" || die "--parallel expects a positive number, got '$JOBS'"
 [ -z "$DEPTH" ] || is_number "$DEPTH" || die "--depth expects a positive number, got '$DEPTH'"
-command -v git >/dev/null 2>&1 || die "git is required"
 
 # map the requested names (case-insensitive) to the canonical repo names
 if [ ${#SELECTED[@]} -gt 0 ]; then
@@ -77,6 +78,19 @@ if [ ${#SELECTED[@]} -gt 0 ]; then
 else
   LIST=("${REPOS[@]}")
 fi
+
+# --- prerequisites: git is required (fail without it), bun is installed when missing, then bun i -E
+fail() { echo "install.sh: $*" >&2; exit 1; }
+command -v git >/dev/null 2>&1 || fail "git is not installed; install git first (https://git-scm.com/downloads)"
+export PATH="$HOME/.bun/bin:$PATH"
+if ! command -v bun >/dev/null 2>&1; then
+  echo "bun not found: installing it with the official script (https://bun.sh/install)"
+  command -v curl >/dev/null 2>&1 || fail "curl is required to install bun"
+  curl -fsSL https://bun.sh/install | bash || fail "the bun installation failed"
+  command -v bun >/dev/null 2>&1 || fail "bun was installed into ~/.bun/bin but is not on PATH"
+fi
+echo "bun $(bun --version) found; installing the hub packages (bun i -E) ..."
+bun i -E || fail "bun i -E failed"
 
 if [ "$USE_SSH" = 1 ]; then PREFIX="git@github.com:$OWNER/"; else PREFIX="https://github.com/$OWNER/"; fi
 DEPTH_FLAG=""; [ -n "$DEPTH" ] && DEPTH_FLAG="--depth=$DEPTH"
@@ -99,4 +113,4 @@ cloned=$(grep -c '^cloned ' "$LOG"); skipped=$(grep -c '^skip ' "$LOG"); failed=
 echo
 echo "Done: $cloned cloned, $skipped skipped, $failed failed."
 if [ "$failed" -gt 0 ]; then echo "Re-run ./scripts/install.sh to retry the failed ones (needs network access to github.com)." >&2; exit 1; fi
-echo "Next: bunx serve . -p 1234   (open http://localhost:1234)   |   ./scripts/update.sh pulls fresh data later"
+echo "Next: ./scripts/start.sh   (open http://localhost:1234)   |   ./scripts/update.sh pulls fresh data later"
