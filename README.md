@@ -28,6 +28,10 @@ bunx serve . -p 1234
 
 `./scripts/update.sh` fetches and fast-forwards `main` of every cloned repository to get fresh data. It takes the same style of arguments: no arguments updates every cloned repository, repositories can be listed positionally (`./scripts/update.sh VanEck Tema` or `VanEck,Tema`), `-p N` / `--parallel N` sets how many are updated in parallel (default 1) and `-h` / `--help` prints the usage. Output is printed per repository as one block and the exit code is non-zero if any repository failed. Both scripts resolve the hub root from their own location, so they work from any working directory. Every cloned repository stays an independent git repository, so you can develop, commit and open pull requests in any of them separately.
 
+`./scripts/clean.sh` removes the cloned sibling repositories again (all of them, or only the listed ones: `./scripts/clean.sh VanEck Tema` or `VanEck,Tema`; `-p N` / `--parallel N`, default 1). A repository with uncommitted changes, unpushed commits or stash entries is never removed: it is kept with a message, so no work is lost. Only the known ETF repositories are touched, never the hub files.
+
+All three scripts are also available through `make` (run `make help`): `make install`, `make update`, `make clean`, with the variables `REPOS` (spaces and/or commas), `PARALLEL`, and for install `DEPTH` and `SSH=1`, for example `make install DEPTH=1`, `make install REPOS=VanEck,Tema SSH=1`, `make update PARALLEL=4`, `make clean REPOS=Tema`.
+
 ### Data sources
 
 Each brand repository publishes the standard feed `api/<slug>/index.json` plus per-fund `funds/<TICKER>/meta.json`, `holdings/NNN.json` and `history/NNN.json` pages; the hub only reads them. The base URL of every brand is chosen like this:
