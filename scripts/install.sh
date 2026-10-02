@@ -1,14 +1,7 @@
 #!/usr/bin/env bash
-# Clone every sibling ETF repo into the hub folder (the parent of scripts/), so the hub app works
-# locally with all the data: bunx serve . -p 1234  ->  http://localhost:1234
+# Clone the sibling ETF repos into the hub folder (the parent of scripts/), so the hub app works
+# locally with all the data:  bunx serve . -p 1234  ->  http://localhost:1234
 # Safe to re-run: repos that are already cloned are skipped, nothing existing is touched.
-#
-#   ./scripts/install.sh                 clone all 29 repos (shallow, HTTPS: fast, small, enough to run the app)
-#   ./scripts/install.sh --full          clone with the full git history (for developing the repos)
-#   ./scripts/install.sh --ssh           clone over SSH (git@github.com:...) instead of HTTPS
-#   ./scripts/install.sh --only A,B      clone only the listed repos, e.g. --only VanEck,Tema
-#   ./scripts/install.sh -j 8            number of parallel clones (default 4)
-# Update later with ./scripts/update.sh
 
 set -uo pipefail
 cd "$(dirname "$0")/.." || exit 1
@@ -16,52 +9,90 @@ cd "$(dirname "$0")/.." || exit 1
 OWNER=daggerok
 REPOS=(AAM aberdeen Amplify ARK Capital-Group Fidelity First-Trust Franklin Global-X Goldman-Sachs Invesco iShares JPMorgan Neos Northern-Trust Pacer Parametric ProShares Schwab SP-Funds SPDR Sprott Tema Themes VanEck Vanguard VictoryShares WisdomTree Xtrackers)
 
-PREFIX="https://github.com/$OWNER/"
-SUFFIX=".git"
-DEPTH_FLAG="--depth=1"
+usage() {
+  cat <<USAGE
+Usage: ./scripts/install.sh [options] [repo ...]
+
+  (no arguments)            clone all ${#REPOS[@]} repos
+  repo ...                  clone only these repos, separated by spaces and/or commas:
+                              ./scripts/install.sh VanEck Tema
+                              ./scripts/install.sh VanEck,Tema
+                              ./scripts/install.sh VanEck,Tema SPDR     (names are case-insensitive)
+
+Options:
+  -s, --ssh                 clone over SSH (git@github.com:$OWNER/...) instead of HTTPS (also: -ssh)
+  -p, --parallel N          number of parallel clones (default 4)
+  -d, --depth N             shallow clone with N commits of history (default: normal full clone),
+                            e.g. --depth 1 is the fastest and smallest way to just run the app
+  -h, --help                show this help
+
+Update the clones later with ./scripts/update.sh
+Repos: ${REPOS[*]}
+USAGE
+}
+
+die() { echo "install.sh: $*" >&2; exit 2; }
+is_number() { case "$1" in ''|*[!0-9]*|0) return 1 ;; *) return 0 ;; esac; }
+
+USE_SSH=0
 JOBS=4
-ONLY=""
+DEPTH=""
+SELECTED=()
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --ssh) PREFIX="git@github.com:$OWNER/" ;;
-    --full) DEPTH_FLAG="" ;;
-    --only) shift; ONLY="${1:-}" ;;
-    -j) shift; JOBS="${1:-4}" ;;
-    -h|--help) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
-    *) echo "unknown option: $1 (see ./scripts/install.sh --help)" >&2; exit 2 ;;
+    -s|--ssh|-ssh) USE_SSH=1 ;;
+    -p|--parallel) [ $# -ge 2 ] || die "$1 expects a number"; JOBS="$2"; shift ;;
+    --parallel=*) JOBS="${1#*=}" ;;
+    -d|--depth) [ $# -ge 2 ] || die "$1 expects a number"; DEPTH="$2"; shift ;;
+    --depth=*) DEPTH="${1#*=}" ;;
+    -h|--help) usage; exit 0 ;;
+    -*) die "unknown option: $1 (see ./scripts/install.sh --help)" ;;
+    *)
+      IFS=',' read -r -a parts <<< "$1"
+      for part in ${parts[@]+"${parts[@]}"}; do
+        [ -n "$part" ] && SELECTED+=("$part")
+      done
+      ;;
   esac
   shift
 done
 
-command -v git >/dev/null 2>&1 || { echo "git is required" >&2; exit 1; }
-case "$JOBS" in ''|*[!0-9]*) echo "-j expects a positive number" >&2; exit 2 ;; esac
+is_number "$JOBS" || die "--parallel expects a positive number, got '$JOBS'"
+[ -z "$DEPTH" ] || is_number "$DEPTH" || die "--depth expects a positive number, got '$DEPTH'"
+command -v git >/dev/null 2>&1 || die "git is required"
 
-if [ -n "$ONLY" ]; then
+# map the requested names (case-insensitive) to the canonical repo names
+if [ ${#SELECTED[@]} -gt 0 ]; then
   LIST=()
-  IFS=',' read -r -a wanted <<< "$ONLY"
-  for w in "${wanted[@]}"; do
-    found=0
-    for r in "${REPOS[@]}"; do [ "$r" = "$w" ] && found=1 && break; done
-    [ $found = 1 ] || { echo "unknown repo: $w (names are case-sensitive: ${REPOS[*]})" >&2; exit 2; }
-    LIST+=("$w")
+  for want in "${SELECTED[@]}"; do
+    lower="$(printf '%s' "$want" | tr '[:upper:]' '[:lower:]')"
+    match=""
+    for repo in "${REPOS[@]}"; do
+      [ "$(printf '%s' "$repo" | tr '[:upper:]' '[:lower:]')" = "$lower" ] && match="$repo" && break
+    done
+    [ -n "$match" ] || die "unknown repo: $want (available: ${REPOS[*]})"
+    LIST+=("$match")
   done
 else
   LIST=("${REPOS[@]}")
 fi
+
+if [ "$USE_SSH" = 1 ]; then PREFIX="git@github.com:$OWNER/"; else PREFIX="https://github.com/$OWNER/"; fi
+DEPTH_FLAG=""; [ -n "$DEPTH" ] && DEPTH_FLAG="--depth=$DEPTH"
 
 clone_one() {
   repo="$1"
   if [ -d "$repo/.git" ]; then echo "skip    $repo (already cloned)"; return 0; fi
   if [ -e "$repo" ]; then echo "FAILED  $repo (a non-git path with this name exists)"; return 1; fi
   # shellcheck disable=SC2086
-  if git clone -q $DEPTH_FLAG "$PREFIX$repo$SUFFIX" "$repo" 2>/dev/null; then echo "cloned  $repo"; else rm -rf "$repo"; echo "FAILED  $repo ($PREFIX$repo$SUFFIX)"; return 1; fi
+  if git clone -q $DEPTH_FLAG "$PREFIX$repo.git" "$repo" 2>/dev/null; then echo "cloned  $repo"; else rm -rf "$repo"; echo "FAILED  $repo ($PREFIX$repo.git)"; return 1; fi
 }
 export -f clone_one
-export PREFIX SUFFIX DEPTH_FLAG
+export PREFIX DEPTH_FLAG
 
 LOG="$(mktemp)"; trap 'rm -f "$LOG"' EXIT
-echo "Cloning ${#LIST[@]} repo(s) into $(pwd) with $JOBS parallel job(s)${DEPTH_FLAG:+ (shallow)} ..."
+echo "Cloning ${#LIST[@]} repo(s) into $(pwd) with $JOBS parallel job(s)${DEPTH:+, depth $DEPTH} ..."
 printf '%s\n' "${LIST[@]}" | xargs -P "$JOBS" -I{} bash -c 'clone_one {}' | tee "$LOG"
 
 cloned=$(grep -c '^cloned ' "$LOG"); skipped=$(grep -c '^skip ' "$LOG"); failed=$(grep -c '^FAILED ' "$LOG")
