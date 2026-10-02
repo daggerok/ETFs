@@ -2,6 +2,10 @@
 
 set -euo pipefail
 
+# Work from the hub root (the parent of scripts/) no matter where this script is started from:
+# it fast-forwards main of every sibling ETF repo cloned next to the hub (see scripts/install.sh).
+cd "$(dirname "$0")/.."
+
 for dir in */; do
   if [ -d "$dir/.git" ]; then
     echo "========================================"

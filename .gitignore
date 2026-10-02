@@ -6,6 +6,7 @@
 # ...except what belongs to the hub repo itself (add new hub folders here, e.g. !/assets/)
 !/.github/
 !/.claude/
+!/scripts/
 
 # local noise
 .idea/
