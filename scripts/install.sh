@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
-# Clone every sibling ETF repo next to this script (into the ETFs folder), so the hub app works
+# Clone every sibling ETF repo into the hub folder (the parent of scripts/), so the hub app works
 # locally with all the data: bunx serve . -p 1234  ->  http://localhost:1234
 # Safe to re-run: repos that are already cloned are skipped, nothing existing is touched.
 #
-#   ./install.sh                 clone all 29 repos (shallow, HTTPS: fast, small, enough to run the app)
-#   ./install.sh --full          clone with the full git history (for developing the repos)
-#   ./install.sh --ssh           clone over SSH (git@github.com:...) instead of HTTPS
-#   ./install.sh --only A,B      clone only the listed repos, e.g. --only VanEck,Tema
-#   ./install.sh -j 8            number of parallel clones (default 4)
-# Update later with ./update.sh
+#   ./scripts/install.sh                 clone all 29 repos (shallow, HTTPS: fast, small, enough to run the app)
+#   ./scripts/install.sh --full          clone with the full git history (for developing the repos)
+#   ./scripts/install.sh --ssh           clone over SSH (git@github.com:...) instead of HTTPS
+#   ./scripts/install.sh --only A,B      clone only the listed repos, e.g. --only VanEck,Tema
+#   ./scripts/install.sh -j 8            number of parallel clones (default 4)
+# Update later with ./scripts/update.sh
 
 set -uo pipefail
-cd "$(dirname "$0")" || exit 1
+cd "$(dirname "$0")/.." || exit 1
 
 OWNER=daggerok
 REPOS=(AAM aberdeen Amplify ARK Capital-Group Fidelity First-Trust Franklin Global-X Goldman-Sachs Invesco iShares JPMorgan Neos Northern-Trust Pacer Parametric ProShares Schwab SP-Funds SPDR Sprott Tema Themes VanEck Vanguard VictoryShares WisdomTree Xtrackers)
@@ -29,7 +29,7 @@ while [ $# -gt 0 ]; do
     --only) shift; ONLY="${1:-}" ;;
     -j) shift; JOBS="${1:-4}" ;;
     -h|--help) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
-    *) echo "unknown option: $1 (see ./install.sh --help)" >&2; exit 2 ;;
+    *) echo "unknown option: $1 (see ./scripts/install.sh --help)" >&2; exit 2 ;;
   esac
   shift
 done
@@ -67,5 +67,5 @@ printf '%s\n' "${LIST[@]}" | xargs -P "$JOBS" -I{} bash -c 'clone_one {}' | tee 
 cloned=$(grep -c '^cloned ' "$LOG"); skipped=$(grep -c '^skip ' "$LOG"); failed=$(grep -c '^FAILED ' "$LOG")
 echo
 echo "Done: $cloned cloned, $skipped skipped, $failed failed."
-if [ "$failed" -gt 0 ]; then echo "Re-run ./install.sh to retry the failed ones (needs network access to github.com)." >&2; exit 1; fi
-echo "Next: bunx serve . -p 1234   (open http://localhost:1234)   |   ./update.sh pulls fresh data later"
+if [ "$failed" -gt 0 ]; then echo "Re-run ./scripts/install.sh to retry the failed ones (needs network access to github.com)." >&2; exit 1; fi
+echo "Next: bunx serve . -p 1234   (open http://localhost:1234)   |   ./scripts/update.sh pulls fresh data later"
