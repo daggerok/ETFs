@@ -181,6 +181,7 @@ const el = {
   brandWarning: byId('brand-warning'),
   searchInput: byId('search-input'),
   searchClearBtn: byId('search-clear-btn'),
+  searchSuggest: byId('search-suggest'),
   tabsBar: byId('tabs-bar'),
   selectedTabsPanel: byId('selected-tabs-panel'),
   selectedTabsBar: byId('selected-tabs-bar'),
@@ -197,10 +198,12 @@ const el = {
   blacklistEmpty: byId('blacklist-empty'),
   brandBtn: byId('brand-btn'),
   brandPanel: byId('brand-panel'),
-  brandList: byId('brand-list'),
-  brandAll: byId('brand-all'),
-  brandNone: byId('brand-none'),
-  categorySelect: byId('category-select'),
+  brandSummary: byId('brand-summary'),
+  brandBadge: byId('brand-badge'),
+  categoryBtn: byId('category-btn'),
+  categoryPanel: byId('category-panel'),
+  categorySummary: byId('category-summary'),
+  categoryBadge: byId('category-badge'),
   staleToggle: byId('stale-toggle'),
   staleDays: byId('stale-days'),
   loadProgress: byId('load-progress'),
@@ -215,7 +218,7 @@ type AppState = {
   selected: Set<string>; // fund keys "Repo:TICKER"
   blacklist: Set<string>;
   hiddenBrands: Set<string>; // repos unchecked in the brand filter
-  category: string; // '' = every category
+  hiddenCategories: Set<string>; // categories unchecked in the category filter (empty = no category filtering)
   hideStale: boolean;
   staleDays: number;
   activeTab: ActiveTab;
@@ -233,7 +236,7 @@ const state: AppState = {
   selected: new Set(),
   blacklist: new Set(),
   hiddenBrands: new Set(),
-  category: '',
+  hiddenCategories: new Set(),
   hideStale: false,
   staleDays: DEFAULT_STALE_DAYS,
   activeTab: 'All',
@@ -274,6 +277,7 @@ type Store = {
   brandText: string[];
   categoryText: string[];
   freqText: string[];
+  fields: Record<SearchField, string[]>; // lower-cased text per searchable field (field:value syntax)
   keyIndex: Map<string, number>;
   tickerIndex: Map<string, number[]>;
   rankCache: Record<string, Float64Array>;
@@ -602,6 +606,40 @@ function classifyBasis(text: unknown): number {
   return 3;
 }
 
+/** Plain-language words of the returns basis, so a search for "official" or "estimate" finds those funds. */
+function basisSearchWords(cls: number): string {
+  if (cls === 1) return 'official';
+  if (cls === 2) return 'official derived estimate mixed';
+  if (cls === 3) return 'derived estimate';
+  return '';
+}
+
+// ---- main search syntax: words are ANDed; field:value / field:"two words" restrict a word to one field ----
+
+type SearchField = 'ticker' | 'name' | 'brand' | 'category' | 'basis' | 'exchange';
+type SearchTerm = { field: SearchField | ''; value: string; start: number; end: number };
+
+const SEARCH_FIELD_ALIASES: Record<string, SearchField> = {
+  ticker: 'ticker', symbol: 'ticker', name: 'name', fund: 'name', brand: 'brand', issuer: 'brand',
+  category: 'category', cat: 'category', type: 'category', basis: 'basis', source: 'basis', exchange: 'exchange',
+};
+
+/** Splits the search text into terms; unknown prefixes stay part of a plain word, quotes keep spaces together. */
+function parseSearchTerms(text: string): SearchTerm[] {
+  const terms: SearchTerm[] = [];
+  const re = /(?:([A-Za-z]+):)?(?:"([^"]*)"?|(\S+))/g;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(text))) {
+    const alias = match[1] ? SEARCH_FIELD_ALIASES[match[1].toLowerCase()] : undefined;
+    let field: SearchTerm['field'] = alias || '';
+    let value = match[2] !== undefined ? match[2] : (match[3] ?? '');
+    if (match[1] && !alias) { field = ''; value = `${match[1]}:${value}`; }
+    value = value.trim().toLowerCase();
+    if (value) terms.push({ field, value, start: match.index, end: match.index + match[0].length });
+  }
+  return terms;
+}
+
 function frequencyOf(fund: any): string {
   const fromDistributions = fund.distributions && typeof fund.distributions === 'object' ? fund.distributions.frequency : '';
   return formatDividendFrequency(fromDistributions || fund.distributionFrequency || '');
@@ -646,6 +684,7 @@ function buildStore(): Store {
     brandText: new Array(n),
     categoryText: new Array(n),
     freqText: new Array(n),
+    fields: { ticker: new Array(n), name: new Array(n), brand: new Array(n), category: new Array(n), basis: new Array(n), exchange: new Array(n) },
     keyIndex: new Map(),
     tickerIndex: new Map(),
     rankCache: {},
@@ -686,8 +725,15 @@ function buildStore(): Store {
     num.asOfTs[i] = parseDateTs(fund.asOfDate);
     num.inceptionTs[i] = parseDateTs(fund.inceptionDate);
     basisCls[i] = classifyBasis(metrics.returnsBasis);
+    const basisWords = basisSearchWords(basisCls[i]);
+    result.fields.ticker[i] = String(fund.ticker).toLowerCase();
+    result.fields.name[i] = String(fund.name ?? '').toLowerCase();
+    result.fields.brand[i] = `${brand.brand} ${brand.repo}`.toLowerCase();
+    result.fields.category[i] = category.toLowerCase();
+    result.fields.basis[i] = `${BASIS_BADGES[Number.isFinite(basisCls[i]) ? String(basisCls[i]) : 'none'].label} ${basisWords} ${String(metrics.returnsBasis ?? '')}`.toLowerCase();
+    result.fields.exchange[i] = String(fund.exchange ?? '').toLowerCase();
     result.search[i] = [
-      fund.ticker, fund.name, brand.brand, brand.repo, category, fund.cusip, fund.isin, fund.exchange,
+      fund.ticker, fund.name, brand.brand, brand.repo, category, fund.cusip, fund.isin, fund.exchange, basisWords,
     ].map(value => String(value ?? '').toLowerCase()).join(' ');
     result.keyIndex.set(result.keys[i], i);
     const clean = sanitizeTicker(fund.ticker);
@@ -722,7 +768,11 @@ function rebuildNow(): void {
 
 function onStoreChanged(): void {
   if (!store) return;
-  if (state.category && !store.categories.includes(state.category)) state.category = '';
+  if (legacyCategory && store.categories.includes(legacyCategory)) {
+    // Older versions saved one category name; keep exactly that one visible.
+    state.hiddenCategories = new Set(store.categories.filter(name => name !== legacyCategory));
+    legacyCategory = '';
+  }
   const active = state.activeFundKey;
   if (!active || !state.selected.has(active) || !store.keyIndex.has(active)) {
     state.activeFundKey = selectedKeys()[0] || null;
@@ -1076,6 +1126,7 @@ type FundRef = { key: string; id: number; ticker: string; name: string; brand: s
 let viewCache: { sig: string; ids: number[] } | null = null;
 let blacklistVersion = 0;
 let filtersSig = '';
+let legacyCategory = ''; // single category saved by an older version, applied once the catalog is built
 let brandListSig = '';
 
 function fundRefById(id: number): FundRef | null {
@@ -1098,6 +1149,10 @@ function brandAllowedFlags(): Uint8Array {
   const flags = new Uint8Array(BRANDS.length);
   BRANDS.forEach((brand, i) => { flags[i] = state.hiddenBrands.has(brand.repo) ? 0 : 1; });
   return flags;
+}
+
+function hiddenCategoriesSig(): string {
+  return [...state.hiddenCategories].sort().join(',');
 }
 
 function hiddenBrandsSig(): string {
@@ -1134,20 +1189,20 @@ function filterCatalogIds(): number[] {
   if (!store) return [];
   const s = store;
   const allowed = brandAllowedFlags();
-  const tokens = normalizeSearchText(catalogQuery()).split(/\s+/).filter(Boolean);
-  const category = state.category ? s.categories.indexOf(state.category) : -1;
+  const terms = parseSearchTerms(catalogQuery());
+  const catAllowed = state.hiddenCategories.size ? Uint8Array.from(s.categories, (name: string) => (state.hiddenCategories.has(name) ? 0 : 1)) : null;
   const staleCut = Date.now() - state.staleDays * DAY_MS;
   const out: number[] = [];
   for (let i = 0; i < s.n; i++) {
     if (!allowed[s.brandIdx[i]]) continue;
     if (state.blacklist.has(s.keys[i])) continue;
-    if (category >= 0 && s.catId[i] !== category) continue;
+    if (catAllowed && !catAllowed[s.catId[i]]) continue;
     if (state.hideStale && !(s.num.perfTs[i] >= staleCut)) continue; // unknown date is stale too
-    if (tokens.length) {
-      const text = s.search[i];
+    if (terms.length) {
       let ok = true;
-      for (let t = 0; t < tokens.length; t++) {
-        if (!text.includes(tokens[t])) { ok = false; break; }
+      for (let t = 0; t < terms.length; t++) {
+        const text = terms[t].field ? s.fields[terms[t].field as SearchField][i] : s.search[i];
+        if (!text.includes(terms[t].value)) { ok = false; break; }
       }
       if (!ok) continue;
     }
@@ -1201,7 +1256,7 @@ function sortIds(ids: number[], key: string, dir: SortDirection): number[] {
 function catalogIds(): number[] {
   if (!store) return [];
   const sig = [
-    store.version, hiddenBrandsSig(), blacklistVersion, state.category, catalogQuery(),
+    store.version, hiddenBrandsSig(), blacklistVersion, hiddenCategoriesSig(), catalogQuery(),
     state.hideStale ? state.staleDays : 'off', state.sortKey, state.sortDir,
     state.hideStale ? Math.floor(Date.now() / DAY_MS) : '',
   ].join('|');
@@ -1384,43 +1439,60 @@ function detailTabKey(tab: ActiveTab): string {
 
 // ---- filters bar: brand multi-select, category, hide stale returns --------
 
+let brandDd: Dropdown | null = null;
+let categoryDd: Dropdown | null = null;
+let categoryItems: DropdownItem[] = [];
+
+function applyBrandSelection(selected: Set<string>): void {
+  state.hiddenBrands = new Set(BRANDS.map(brand => brand.repo).filter(repo => !selected.has(repo)));
+  persistViewFilters();
+  render();
+}
+
+function applyCategorySelection(selected: Set<string>): void {
+  state.hiddenCategories = new Set(categoryItems.map(item => item.id).filter(name => !selected.has(name)));
+  persistViewFilters();
+  render();
+}
+
+function filterSummary(selected: number, total: number): string {
+  return selected === total ? `${selected} of ${total}` : `${selected} selected`;
+}
+
 function renderFilters(): void {
   const brandCount = BRANDS.length - state.hiddenBrands.size;
-  el.brandBtn.textContent = `Brands (${brandCount}/${BRANDS.length})`;
+  const brandsFiltered = brandCount < BRANDS.length;
+  el.brandSummary.textContent = filterSummary(brandCount, BRANDS.length);
+  el.brandBadge.hidden = !brandsFiltered;
+  el.brandBadge.textContent = `${brandCount}/${BRANDS.length}`;
+  el.brandBtn.classList.toggle('is-filtered', brandsFiltered);
   if (document.activeElement !== el.staleDays) el.staleDays.value = String(state.staleDays);
   el.staleToggle.checked = state.hideStale;
 
-  const sig = [store ? store.version : 0, hiddenBrandsSig(), blacklistVersion, state.category].join('|');
+  const sig = [store ? store.version : 0, hiddenBrandsSig(), blacklistVersion, hiddenCategoriesSig()].join('|');
   if (sig === filtersSig) return;
   filtersSig = sig;
-  const options: string[] = [];
+  const items: DropdownItem[] = [];
   if (store) {
     const counts = new Map<number, number>();
-    const ids = baseIds();
-    ids.forEach(id => counts.set(store ? store.catId[id] : 0, (counts.get(store ? store.catId[id] : 0) || 0) + 1));
-    const entries = [...counts.entries()]
-      .map(([cid, count]) => ({ name: store ? store.categories[cid] : '', count }))
-      .sort((a, b) => collator.compare(a.name || '~', b.name || '~'));
-    options.push(`<option value="">All categories (${ids.length})</option>`);
-    entries.forEach(entry => {
-      options.push(`<option value="${escapeHtml(entry.name)}">${escapeHtml(entry.name || '(no category)')} (${entry.count})</option>`);
+    baseIds().forEach(id => counts.set(store ? store.catId[id] : 0, (counts.get(store ? store.catId[id] : 0) || 0) + 1));
+    store.categories.forEach((name: string, cid: number) => {
+      items.push({ id: name, label: name || '(no category)', count: counts.get(cid) || 0, selected: !state.hiddenCategories.has(name) });
     });
-    if (state.category && !counts.size) options.push(`<option value="${escapeHtml(state.category)}">${escapeHtml(state.category)} (0)</option>`);
-  } else {
-    options.push('<option value="">All categories</option>');
+    items.sort((a, b) => collator.compare(a.id || '~', b.id || '~'));
   }
-  el.categorySelect.innerHTML = options.join('');
-  el.categorySelect.value = state.category;
-  if (el.categorySelect.value !== state.category) el.categorySelect.value = '';
+  categoryItems = items;
+  const selected = items.filter(item => item.selected);
+  const filtered = selected.length < items.length;
+  el.categoryBtn.classList.toggle('is-filtered', filtered);
+  el.categoryBadge.hidden = !filtered;
+  el.categoryBadge.textContent = `${selected.length}/${items.length}`;
+  el.categorySummary.textContent = items.length ? (selected.length === 1 ? selected[0].label : filterSummary(selected.length, items.length)) : '...';
+  categoryDd?.refresh();
 }
 
-function renderBrandList(): void {
-  const sig = [
-    brandStatus.join(','), brandFunds.map(list => list.length).join(','), hiddenBrandsSig(), [...remoteFallback].join(','),
-  ].join('|');
-  if (sig === brandListSig) return;
-  brandListSig = sig;
-  el.brandList.innerHTML = BRANDS.map((brand, i) => {
+function brandDropdownItems(): DropdownItem[] {
+  return BRANDS.map((brand, i) => {
     const status = brandStatus[i];
     const badge = status === 'error'
       ? `<span class="text-[0.65rem] px-1.5 py-0.5 rounded-full bg-rose-100 dark:bg-rose-900/40 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-700/50" title="${escapeHtml(brandError[i])}">unavailable</span>`
@@ -1432,22 +1504,520 @@ function renderBrandList(): void {
     const remoteBadge = API_MODE === 'local' && remoteFallback.has(brand.repo)
       ? '<span class="text-[0.65rem] px-1.5 py-0.5 rounded-full bg-sky-100 dark:bg-sky-900/30 text-sky-700 dark:text-sky-300 border border-sky-200 dark:border-sky-700/50" title="Sibling folder not found locally; served from GitHub Pages">remote</span>'
       : '';
-    return `
-      <label class="flex items-center gap-2 px-1.5 py-1 rounded hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer text-sm">
-        <input type="checkbox" data-brand="${escapeHtml(brand.repo)}" ${state.hiddenBrands.has(brand.repo) ? '' : 'checked'} class="w-4 h-4 accent-blue-600 cursor-pointer" />
-        <span class="flex-1 truncate text-slate-700 dark:text-slate-200">${escapeHtml(brand.brand)}</span>
-        ${remoteBadge}${badge}
-        <span class="font-mono text-xs text-slate-400">${brandFunds[i].length}</span>
-      </label>`;
-  }).join('');
+    return {
+      id: brand.repo,
+      label: brand.brand,
+      count: brandFunds[i].length,
+      selected: !state.hiddenBrands.has(brand.repo),
+      badges: remoteBadge + badge,
+    };
+  });
 }
 
-function setBrandHidden(repo: string, hidden: boolean): void {
-  if (hidden) state.hiddenBrands.add(repo);
-  else state.hiddenBrands.delete(repo);
-  persistViewFilters();
-  render();
+function renderBrandList(): void {
+  const sig = [
+    brandStatus.join(','), brandFunds.map(list => list.length).join(','), hiddenBrandsSig(), [...remoteFallback].join(','),
+  ].join('|');
+  if (sig === brandListSig) return;
+  brandListSig = sig;
+  brandDd?.refresh();
 }
+
+// ---- filter dropdowns: one reusable MultiSelect (brands, categories) -------
+
+type DropdownItem = { id: string; label: string; count: number; selected: boolean; badges?: string };
+
+type Dropdown = { refresh(): void; open(query?: string): void; close(restoreFocus?: boolean): void; isOpen(): boolean };
+
+type DropdownConfig = {
+  trigger: any;
+  panel: any;
+  title: string; // "Brands"
+  noun: string; // "brands", used in the search placeholder and the empty state
+  unit: string; // what the row number counts: "funds" or "ETFs"
+  getItems(): DropdownItem[];
+  /** Receives the complete new selection; the owner persists it and re-renders. */
+  onChange(selected: Set<string>): void;
+};
+
+const DD_TICK = '<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3.5 8.5 3 3 6-7"/></svg>';
+
+/**
+ * Accessible multi-select popover. Layout, top to bottom: search field (first
+ * line, autofocused), bulk actions (Select all / Clear / Toggle all / Reset),
+ * counts + "Selected only", the scrollable option list. The selection lives in
+ * the owner's state and is independent of the search text: the search only
+ * decides which rows are visible, bulk actions touch only the visible rows and
+ * merge with the rest, Reset restores "everything selected".
+ * Keyboard (focus stays in the search input; combobox + aria-activedescendant):
+ * Up/Down/PageUp/PageDown move, Enter toggles the active row (Shift+Enter =
+ * Only), Space toggles while the search is empty, Ctrl/Cmd+A selects all visible,
+ * Esc clears the search, then closes and refocuses the trigger. Typing on the
+ * closed trigger opens the list with that text as the query. Under 640px the
+ * panel is a bottom sheet with a backdrop (see .dd-panel in index.html).
+ */
+function createDropdown(cfg: DropdownConfig): Dropdown {
+  const { trigger, panel } = cfg;
+  const uid = panel.id;
+  const reduceMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  panel.setAttribute('role', 'dialog');
+  panel.setAttribute('aria-label', cfg.title);
+  panel.innerHTML = `
+    <div class="dd-search">
+      <svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="9" cy="9" r="5.5"/><path d="m13.5 13.5 3.5 3.5"/></svg>
+      <input type="text" class="dd-input" role="combobox" aria-expanded="true" aria-autocomplete="list" aria-controls="${uid}-list" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Search ${escapeHtml(cfg.noun)}..." aria-label="Search ${escapeHtml(cfg.noun)}" />
+      <button type="button" class="dd-qclear" hidden aria-label="Clear search" tabindex="-1">✕</button>
+      <button type="button" class="dd-close" aria-label="Close ${escapeHtml(cfg.title)}">✕</button>
+    </div>
+    <div class="dd-actions" role="group" aria-label="Bulk actions for the shown ${escapeHtml(cfg.noun)}">
+      <button type="button" class="dd-act" data-act="all" title="Select every shown row (Ctrl/Cmd+A)">Select all</button>
+      <button type="button" class="dd-act" data-act="none" title="Deselect every shown row">Clear</button>
+      <button type="button" class="dd-act" data-act="toggle" title="Invert the selection of the shown rows">Toggle all</button>
+      <button type="button" class="dd-act" data-act="reset" title="Back to the default: everything selected, whatever the search">Reset</button>
+    </div>
+    <div class="dd-meta">
+      <span class="dd-count" aria-live="polite"></span>
+      <button type="button" class="dd-seltoggle" aria-pressed="false" title="Show only the rows selected so far">Selected only</button>
+    </div>
+    <div class="dd-list themed-scroll" id="${uid}-list" tabindex="-1" role="listbox" aria-multiselectable="true" aria-label="${escapeHtml(cfg.title)}"></div>`;
+  const backdrop = document.createElement('div');
+  backdrop.className = 'dd-backdrop';
+  // Portal both to <body>: no ancestor stacking context or overflow can cover or clip the popover.
+  document.body.appendChild(backdrop);
+  document.body.appendChild(panel);
+  const input: any = panel.querySelector('.dd-input');
+  const list: any = panel.querySelector('.dd-list');
+  const count: any = panel.querySelector('.dd-count');
+  const qClear: any = panel.querySelector('.dd-qclear');
+  const selToggle: any = panel.querySelector('.dd-seltoggle');
+
+  let isOpen = false;
+  let query = '';
+  let selectedOnly = false;
+  let activeId: string | null = null;
+  let shown: DropdownItem[] = [];
+  let closeTimer: any = 0;
+
+  const optionId = (index: number) => `${uid}-o${index}`;
+  const inRoot = (node: any) => Boolean(node && (panel.contains(node) || trigger.contains(node) || backdrop.contains(node)));
+
+  function matches(item: DropdownItem): boolean {
+    if (selectedOnly && !item.selected) return false;
+    const tokens = normalizeSearchText(query).split(/\s+/).filter(Boolean);
+    if (!tokens.length) return true;
+    const text = normalizeSearchText(item.label);
+    return tokens.every(token => text.includes(token));
+  }
+
+  function paintActive(scroll: boolean): void {
+    const rows: any[] = [...list.querySelectorAll('.dd-opt')];
+    let activeEl: any = null;
+    rows.forEach(row => {
+      const on = row.dataset.id === activeId;
+      row.classList.toggle('is-active', on);
+      if (on) activeEl = row;
+    });
+    if (activeEl) input.setAttribute('aria-activedescendant', activeEl.id);
+    else input.removeAttribute('aria-activedescendant');
+    if (scroll && activeEl) {
+      const top = activeEl.offsetTop - list.offsetTop;
+      if (top < list.scrollTop) list.scrollTop = top - 6;
+      else if (top + activeEl.offsetHeight > list.scrollTop + list.clientHeight) list.scrollTop = top + activeEl.offsetHeight - list.clientHeight + 6;
+    }
+  }
+
+  function refresh(): void {
+    const all = cfg.getItems();
+    shown = all.filter(matches);
+    if (!shown.some(item => item.id === activeId)) activeId = shown.length ? shown[0].id : null;
+    const keepScroll = list.scrollTop;
+    list.innerHTML = shown.length
+      ? shown.map((item, i) => `
+        <div class="dd-opt${item.count === 0 ? ' dd-zero' : ''}" role="option" id="${optionId(i)}" data-id="${escapeHtml(item.id)}" aria-selected="${item.selected}">
+          <span class="dd-check">${DD_TICK}</span>
+          <span class="dd-name" title="${escapeHtml(item.label)}">${escapeHtml(item.label)}</span>
+          ${item.badges || ''}
+          <span class="dd-num" title="${escapeHtml(cfg.unit)}">${item.count}</span>
+          <button type="button" class="dd-only" data-only tabindex="-1" aria-label="Only ${escapeHtml(item.label)}">Only</button>
+        </div>`).join('')
+      : `<div class="dd-empty">${selectedOnly && !query.trim() ? `Nothing selected` : `No ${escapeHtml(cfg.noun)} match “${escapeHtml(query.trim())}”`}</div>`;
+    list.scrollTop = keepScroll;
+    const selectedTotal = all.filter(item => item.selected).length;
+    const narrowed = Boolean(query.trim()) || selectedOnly;
+    count.textContent = `${selectedTotal} of ${all.length} selected${narrowed ? ` · ${shown.filter(item => item.selected).length} of ${shown.length} shown` : ''}`;
+    qClear.hidden = !query;
+    selToggle.setAttribute('aria-pressed', String(selectedOnly));
+    selToggle.classList.toggle('is-on', selectedOnly);
+    paintActive(false);
+  }
+
+  function apply(op: 'all' | 'none' | 'toggle' | 'reset' | 'flip' | 'only', id = ''): void {
+    const all = cfg.getItems();
+    let next = new Set(all.filter(item => item.selected).map(item => item.id));
+    const visible = shown.map(item => item.id);
+    if (op === 'all') visible.forEach(v => next.add(v));
+    else if (op === 'none') visible.forEach(v => next.delete(v));
+    else if (op === 'toggle') visible.forEach(v => { if (next.has(v)) next.delete(v); else next.add(v); });
+    else if (op === 'reset') next = new Set(all.map(item => item.id));
+    else if (op === 'flip') { if (next.has(id)) next.delete(id); else next.add(id); }
+    else if (op === 'only') next = new Set([id]);
+    cfg.onChange(next);
+    refresh();
+  }
+
+  function place(): void {
+    panel.style.left = '';
+    panel.style.top = '';
+    panel.style.bottom = '';
+    panel.style.maxHeight = '';
+    if (window.matchMedia('(max-width: 639px)').matches) return; // bottom sheet, positioned by CSS
+    const rect = trigger.getBoundingClientRect();
+    const width = panel.offsetWidth;
+    const natural = panel.offsetHeight;
+    const below = window.innerHeight - rect.bottom - 16;
+    const above = rect.top - 16;
+    const flip = below < Math.min(natural, 360) && above > below;
+    panel.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - width - 8))}px`;
+    panel.style.maxHeight = `${Math.max(180, flip ? above : below) - 8}px`;
+    if (flip) {
+      panel.style.top = 'auto';
+      panel.style.bottom = `${window.innerHeight - rect.top + 8}px`;
+      panel.style.transformOrigin = 'bottom left';
+    } else {
+      panel.style.top = `${rect.bottom + 8}px`;
+      panel.style.transformOrigin = 'top left';
+    }
+  }
+
+  function open(initialQuery = ''): void {
+    if (isOpen) return;
+    isOpen = true;
+    clearTimeout(closeTimer);
+    query = initialQuery;
+    selectedOnly = false;
+    input.value = initialQuery;
+    const firstSelected = cfg.getItems().find(item => item.selected && matches(item));
+    activeId = firstSelected ? firstSelected.id : null;
+    refresh();
+    panel.hidden = false;
+    place();
+    void panel.offsetWidth; // reflow so the transition starts from the closed state
+    panel.classList.add('is-open');
+    backdrop.classList.add('is-open');
+    trigger.setAttribute('aria-expanded', 'true');
+    input.focus({ preventScroll: true });
+    input.setSelectionRange(input.value.length, input.value.length);
+    const row: any = [...list.querySelectorAll('.dd-opt')].find((r: any) => r.dataset.id === activeId);
+    if (row) list.scrollTop = Math.max(0, row.offsetTop - list.offsetTop - list.clientHeight / 3);
+    paintActive(false);
+  }
+
+  function close(restoreFocus = false): void {
+    if (!isOpen) return;
+    isOpen = false;
+    panel.classList.remove('is-open');
+    backdrop.classList.remove('is-open');
+    trigger.setAttribute('aria-expanded', 'false');
+    if (restoreFocus) trigger.focus({ preventScroll: true });
+    clearTimeout(closeTimer);
+    closeTimer = setTimeout(() => { if (!isOpen) panel.hidden = true; }, reduceMotion() ? 0 : 200);
+  }
+
+  function move(delta: number): void {
+    if (!shown.length) return;
+    const index = shown.findIndex(item => item.id === activeId);
+    const next = index < 0 ? (delta > 0 ? 0 : shown.length - 1) : (index + delta + shown.length) % shown.length;
+    activeId = shown[next].id;
+    paintActive(true);
+  }
+
+  function setQuery(value: string): void {
+    query = value;
+    list.scrollTop = 0;
+    refresh();
+  }
+
+  trigger.addEventListener('click', () => { if (isOpen) close(); else open(); });
+  trigger.addEventListener('keydown', (event: any) => {
+    if (event.altKey || event.ctrlKey || event.metaKey) return;
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); open(); }
+    else if (event.key.length === 1 && event.key !== ' ') { event.preventDefault(); open(event.key); }
+  });
+  input.addEventListener('input', () => setQuery(input.value));
+  input.addEventListener('keydown', (event: any) => {
+    if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === 'a') {
+      event.preventDefault();
+      apply('all');
+      return;
+    }
+    switch (event.key) {
+      case 'ArrowDown': event.preventDefault(); move(1); break;
+      case 'ArrowUp': event.preventDefault(); move(-1); break;
+      case 'PageDown': event.preventDefault(); move(8); break;
+      case 'PageUp': event.preventDefault(); move(-8); break;
+      case 'Enter':
+        event.preventDefault();
+        if (activeId !== null && shown.some(item => item.id === activeId)) apply(event.shiftKey ? 'only' : 'flip', activeId);
+        break;
+      case ' ':
+        if (!input.value && activeId !== null) { event.preventDefault(); apply('flip', activeId); }
+        break;
+      case 'Escape':
+        event.preventDefault();
+        event.stopPropagation();
+        if (input.value) { input.value = ''; setQuery(''); } else close(true);
+        break;
+      default:
+    }
+  });
+  panel.addEventListener('keydown', (event: any) => {
+    if (event.key === 'Escape' && event.target !== input) { event.preventDefault(); event.stopPropagation(); close(true); }
+  });
+  list.addEventListener('mousedown', (event: any) => event.preventDefault()); // keep focus in the search field
+  list.addEventListener('pointermove', (event: any) => {
+    const row = event.target.closest && event.target.closest('.dd-opt');
+    if (row && row.dataset.id !== activeId) { activeId = row.dataset.id; paintActive(false); }
+  });
+  list.addEventListener('click', (event: any) => {
+    const row = event.target.closest && event.target.closest('.dd-opt');
+    if (!row) return;
+    apply(event.target.closest('[data-only]') ? 'only' : 'flip', row.dataset.id);
+  });
+  qClear.addEventListener('mousedown', (event: any) => event.preventDefault());
+  qClear.addEventListener('click', () => { input.value = ''; setQuery(''); input.focus(); });
+  panel.querySelector('.dd-close').addEventListener('click', () => close(true));
+  backdrop.addEventListener('click', () => close());
+  selToggle.addEventListener('click', () => { selectedOnly = !selectedOnly; list.scrollTop = 0; refresh(); input.focus({ preventScroll: true }); });
+  panel.querySelectorAll('[data-act]').forEach((button: any) => {
+    button.addEventListener('click', () => apply(button.dataset.act));
+  });
+  panel.addEventListener('focusout', (event: any) => {
+    if (isOpen && event.relatedTarget && !inRoot(event.relatedTarget)) close();
+  });
+  document.addEventListener('pointerdown', (event: any) => {
+    if (isOpen && !inRoot(event.target)) close();
+  });
+  window.addEventListener('resize', () => { if (isOpen) place(); });
+  window.addEventListener('scroll', () => { if (isOpen) place(); }, { passive: true, capture: true });
+  // The panel lives at the end of <body>, so Tab at its edges hands focus back to the page order around the trigger.
+  panel.addEventListener('keydown', (event: any) => {
+    if (event.key !== 'Tab') return;
+    const focusable = [...panel.querySelectorAll('input, button')].filter((node: any) => node.tabIndex >= 0 && node.offsetParent !== null);
+    if (!focusable.length) return;
+    const edge = event.shiftKey ? focusable[0] : focusable[focusable.length - 1];
+    if (event.target !== edge) return;
+    event.preventDefault();
+    close();
+    if (event.shiftKey) { trigger.focus({ preventScroll: true }); return; }
+    const page = [...document.querySelectorAll('a[href], button, input, select, textarea, [tabindex]')]
+      .filter((node: any) => !panel.contains(node) && node.tabIndex >= 0 && !node.disabled && (node.offsetParent !== null || node === trigger));
+    const next: any = page[page.indexOf(trigger) + 1];
+    if (next) next.focus();
+  });
+
+  return { refresh, open, close, isOpen: () => isOpen };
+}
+
+// ---- one custom tooltip for the whole app (top layer) -------------------------
+
+/**
+ * Replaces native `title` tooltips (which the layout can neither style nor keep
+ * above popovers) with a single fixed element appended to <body> and sitting at
+ * the highest z-index. Works by delegation, so rows and headers that re-render
+ * need no wiring: on first hover or keyboard focus a `title` moves to `data-tip`
+ * (and becomes the aria-label of an icon-only control). Shown after a short
+ * hover delay or immediately on keyboard focus, flipped above the element when
+ * there is no room below, clamped to the viewport, hidden on Esc, scroll or press.
+ */
+function initTooltips(): void {
+  const tip = document.createElement('div');
+  tip.id = 'hub-tooltip';
+  tip.className = 'hub-tip';
+  tip.setAttribute('role', 'tooltip');
+  document.body.appendChild(tip);
+  let current: any = null;
+  let timer: any = 0;
+  let pointerX = 0;
+
+  const textOf = (node: any): string => {
+    const title = node.getAttribute('title');
+    if (title) {
+      node.setAttribute('data-tip', title);
+      node.removeAttribute('title');
+      if (!node.hasAttribute('aria-label') && !(node.textContent || '').trim()) node.setAttribute('aria-label', title);
+    }
+    return node.getAttribute('data-tip') || '';
+  };
+  const targetOf = (node: any): any => (node && typeof node.closest === 'function' ? node.closest('[title], [data-tip]') : null);
+
+  function hide(): void {
+    clearTimeout(timer);
+    if (current) current.removeAttribute('aria-describedby');
+    current = null;
+    tip.classList.remove('is-open');
+  }
+
+  function show(node: any): void {
+    const text = textOf(node);
+    if (!text || !document.contains(node)) { hide(); return; }
+    current = node;
+    node.setAttribute('aria-describedby', 'hub-tooltip');
+    tip.textContent = text;
+    tip.style.left = '0px';
+    tip.style.top = '0px';
+    const rect = node.getBoundingClientRect();
+    const width = tip.offsetWidth;
+    const height = tip.offsetHeight;
+    const anchor = rect.width > 240 && pointerX >= rect.left && pointerX <= rect.right ? pointerX : rect.left + rect.width / 2;
+    const left = Math.max(8, Math.min(anchor - width / 2, window.innerWidth - width - 8));
+    let top = rect.bottom + 8;
+    if (top + height > window.innerHeight - 8) top = rect.top - height - 8;
+    tip.style.left = `${left}px`;
+    tip.style.top = `${Math.max(8, top)}px`;
+    tip.classList.add('is-open');
+  }
+
+  document.addEventListener('pointerover', (event: any) => {
+    if (event.pointerType === 'touch') return;
+    pointerX = event.clientX;
+    const node = targetOf(event.target);
+    if (node === current && tip.classList.contains('is-open')) return;
+    hide();
+    if (node) { textOf(node); timer = setTimeout(() => show(node), 350); }
+  });
+  document.addEventListener('pointerout', (event: any) => {
+    if (current && !current.contains(event.relatedTarget)) hide();
+    else if (!current) clearTimeout(timer);
+  });
+  document.addEventListener('focusin', (event: any) => {
+    const node = targetOf(event.target);
+    if (node && typeof node.matches === 'function' && node.matches(':focus-visible')) { hide(); show(node); }
+  });
+  document.addEventListener('focusout', hide);
+  document.addEventListener('keydown', (event: any) => { if (event.key === 'Escape') hide(); });
+  document.addEventListener('pointerdown', hide);
+  // A scroll hides an open tooltip but must not cancel one still waiting for its hover delay (layout code scrolls on its own).
+  window.addEventListener('scroll', () => { if (tip.classList.contains('is-open')) hide(); }, { passive: true, capture: true });
+  window.addEventListener('resize', hide);
+}
+
+// ---- facet suggestions under the main search input ---------------------------
+
+type Suggestion = { kind: 'brand' | 'category'; id: string; label: string; count: number; selected: boolean };
+
+/**
+ * While the user types a word in the catalog search, offers the matching brand
+ * and category values (with fund counts). Picking one adds it to the same
+ * selection the checkbox dropdowns edit (or selects only it while nothing is
+ * filtered yet; Shift+Enter or the "Only" button always means only it) and
+ * removes the typed word. Down/Up move (nothing is active until then, so plain
+ * typing and Enter are untouched), Enter picks, Esc closes.
+ */
+function initSearchSuggest(): void {
+  const input = el.searchInput;
+  const panel = el.searchSuggest;
+  let items: Suggestion[] = [];
+  let term: SearchTerm | null = null;
+  let active = -1;
+
+  input.setAttribute('role', 'combobox');
+  input.setAttribute('aria-autocomplete', 'list');
+  input.setAttribute('aria-controls', 'search-suggest');
+  input.setAttribute('aria-expanded', 'false');
+  input.setAttribute('title', 'Words are ANDed across ticker, name, brand, category, basis and exchange. Use brand:vaneck, category:"fixed income", ticker:spy, basis:official to target one field.');
+
+  const isOpen = () => !panel.hidden;
+  function close(): void {
+    items = [];
+    active = -1;
+    panel.hidden = true;
+    panel.classList.remove('is-open');
+    input.setAttribute('aria-expanded', 'false');
+    input.removeAttribute('aria-activedescendant');
+  }
+
+  function paint(): void {
+    panel.innerHTML = items.map((item, i) => `
+      <div class="dd-opt${i === active ? ' is-active' : ''}" role="option" id="sg-o${i}" data-i="${i}" aria-selected="${item.selected}">
+        <span class="sg-kind sg-${item.kind}">${item.kind === 'brand' ? 'Brand' : 'Category'}</span>
+        <span class="dd-name" title="${escapeHtml(item.label)}">${escapeHtml(item.label)}</span>
+        <span class="dd-num" title="${item.kind === 'brand' ? 'funds' : 'ETFs'}">${item.count}</span>
+        <button type="button" class="dd-only" data-only tabindex="-1" aria-label="Only ${escapeHtml(item.label)}">Only</button>
+      </div>`).join('') + '<div class="sg-hint">Enter adds to the selection, Shift+Enter shows only this</div>';
+    if (active >= 0) input.setAttribute('aria-activedescendant', `sg-o${active}`);
+    else input.removeAttribute('aria-activedescendant');
+  }
+
+  function update(): void {
+    close();
+    if (!isEtfCatalogTab(state.activeTab) || !store || document.activeElement !== input) return;
+    const terms = parseSearchTerms(input.value);
+    const last = terms[terms.length - 1];
+    if (!last || last.end !== input.value.trimEnd().length) return; // only the word being typed
+    if (last.field && last.field !== 'brand' && last.field !== 'category') return;
+    const needle = last.value;
+    const rank = (label: string) => (label.toLowerCase().startsWith(needle) ? 0 : 1);
+    const pool: Suggestion[] = [];
+    if (!last.field || last.field === 'brand') {
+      brandDropdownItems().forEach(item => pool.push({ kind: 'brand', id: item.id, label: item.label, count: item.count, selected: item.selected }));
+    }
+    if (!last.field || last.field === 'category') {
+      categoryItems.filter(item => item.id).forEach(item => pool.push({ kind: 'category', id: item.id, label: item.label, count: item.count, selected: item.selected }));
+    }
+    const matched = pool.filter(item => item.label.toLowerCase().includes(needle));
+    const pick = (kind: string) => matched.filter(item => item.kind === kind).sort((a, b) => rank(a.label) - rank(b.label) || b.count - a.count || collator.compare(a.label, b.label)).slice(0, 5);
+    items = [...pick('brand'), ...pick('category')];
+    if (!items.length) return;
+    term = last;
+    paint();
+    panel.hidden = false;
+    void panel.offsetWidth;
+    panel.classList.add('is-open');
+    input.setAttribute('aria-expanded', 'true');
+  }
+
+  function choose(index: number, only: boolean): void {
+    const item = items[index];
+    if (!item || !term) return;
+    const kindItems = item.kind === 'brand' ? brandDropdownItems() : categoryItems;
+    const current = new Set(kindItems.filter(entry => entry.selected).map(entry => entry.id));
+    const everything = current.size === kindItems.length;
+    const next = only || everything ? new Set([item.id]) : new Set([...current, item.id]);
+    const value = input.value;
+    input.value = `${value.slice(0, term.start)}${value.slice(term.end)}`.replace(/\s{2,}/g, ' ').trimStart();
+    setCurrentQuery(input.value.trim());
+    updateSearchClearBtn();
+    close();
+    if (item.kind === 'brand') applyBrandSelection(next);
+    else applyCategorySelection(next);
+    brandDd?.refresh();
+    categoryDd?.refresh();
+    input.focus();
+  }
+
+  input.addEventListener('input', update);
+  input.addEventListener('focus', update);
+  input.addEventListener('blur', () => close());
+  input.addEventListener('keydown', (event: any) => {
+    if (!isOpen()) return;
+    if (event.key === 'ArrowDown') { event.preventDefault(); active = (active + 1) % items.length; paint(); }
+    else if (event.key === 'ArrowUp') { event.preventDefault(); active = active <= 0 ? items.length - 1 : active - 1; paint(); }
+    else if (event.key === 'Enter' && active >= 0) { event.preventDefault(); choose(active, event.shiftKey); }
+    else if (event.key === 'Escape') { event.preventDefault(); close(); }
+    else if (event.key === 'Tab') close();
+  });
+  panel.addEventListener('mousedown', (event: any) => event.preventDefault()); // keep focus in the input
+  panel.addEventListener('pointermove', (event: any) => {
+    const row = event.target.closest && event.target.closest('.dd-opt');
+    if (row && Number(row.dataset.i) !== active) { active = Number(row.dataset.i); paint(); }
+  });
+  panel.addEventListener('click', (event: any) => {
+    const row = event.target.closest && event.target.closest('.dd-opt');
+    if (row) choose(Number(row.dataset.i), Boolean(event.target.closest('[data-only]')));
+  });
+  el.searchClearBtn.addEventListener('click', close);
+}
+
 
 // =========================================================================
 // 7. Table rendering, sorting & tooltips
@@ -1501,7 +2071,7 @@ function syncSearchInput(): void {
     el.searchInput.value = query;
   }
   el.searchInput.placeholder = isEtfCatalogTab(state.activeTab)
-    ? 'Search ETFs by ticker, name or brand...'
+    ? 'Search ticker, name, brand, category... or brand:vaneck'
     : `Search ${tabLabel(state.activeTab)}...`;
   updateSearchClearBtn();
 }
@@ -1690,7 +2260,7 @@ function growCatalogChunk(): void {
 function renderFundsTable(): void {
   const ids = catalogIds();
   catalogVisibleIds = ids;
-  const sig = [state.sortKey, state.sortDir, catalogQuery(), state.category, hiddenBrandsSig(), state.hideStale, state.staleDays, store ? store.version : 0, blacklistVersion].join('|');
+  const sig = [state.sortKey, state.sortDir, catalogQuery(), hiddenCategoriesSig(), hiddenBrandsSig(), state.hideStale, state.staleDays, store ? store.version : 0, blacklistVersion].join('|');
   if (sig !== catalogChunkSig) {
     catalogChunkSig = sig;
     catalogRenderedCount = CATALOG_CHUNK;
@@ -2613,7 +3183,7 @@ function persistBlacklist(): void {
 function persistViewFilters(): void {
   lsSet(VIEW_FILTERS_KEY, JSON.stringify({
     hiddenBrands: [...state.hiddenBrands],
-    category: state.category,
+    hiddenCategories: [...state.hiddenCategories],
     hideStale: state.hideStale,
     staleDays: state.staleDays,
   }));
@@ -2674,7 +3244,8 @@ function restoreViewFilters(): void {
   if (!saved || typeof saved !== 'object' || Array.isArray(saved)) return;
   const repos = new Set(BRANDS.map(brand => brand.repo));
   if (Array.isArray(saved.hiddenBrands)) state.hiddenBrands = new Set(saved.hiddenBrands.filter((repo: unknown) => typeof repo === 'string' && repos.has(repo)));
-  if (typeof saved.category === 'string') state.category = saved.category;
+  if (Array.isArray(saved.hiddenCategories)) state.hiddenCategories = new Set(saved.hiddenCategories.filter((name: unknown) => typeof name === 'string'));
+  else if (typeof saved.category === 'string' && saved.category) legacyCategory = saved.category;
   state.hideStale = saved.hideStale === true;
   const days = Number(saved.staleDays);
   if (Number.isFinite(days) && days >= 1 && days <= 3650) state.staleDays = Math.floor(days);
@@ -2733,36 +3304,27 @@ function bindEvents(): void {
   });
   el.blacklistClearBtn.addEventListener('click', clearBlacklist);
 
-  // Filters bar: brand multi-select popover, category, hide stale returns.
-  el.brandBtn.addEventListener('click', () => {
-    const open = el.brandPanel.hidden;
-    el.brandPanel.hidden = !open;
-    el.brandBtn.setAttribute('aria-expanded', String(open));
+  initTooltips();
+  initSearchSuggest();
+
+  // Filters bar: brand and category multi-select popovers, hide stale returns.
+  brandDd = createDropdown({
+    trigger: el.brandBtn,
+    panel: el.brandPanel,
+    title: 'Brands',
+    noun: 'brands',
+    unit: 'funds',
+    getItems: brandDropdownItems,
+    onChange: applyBrandSelection,
   });
-  document.addEventListener('pointerdown', (event: any) => {
-    if (el.brandPanel.hidden) return;
-    if (el.brandPanel.contains(event.target) || el.brandBtn.contains(event.target)) return;
-    el.brandPanel.hidden = true;
-    el.brandBtn.setAttribute('aria-expanded', 'false');
-  });
-  el.brandList.addEventListener('change', (event: any) => {
-    const target = event.target;
-    if (target && target.dataset && target.dataset.brand) setBrandHidden(target.dataset.brand, !target.checked);
-  });
-  el.brandAll.addEventListener('click', () => {
-    state.hiddenBrands = new Set();
-    persistViewFilters();
-    render();
-  });
-  el.brandNone.addEventListener('click', () => {
-    state.hiddenBrands = new Set(BRANDS.map(brand => brand.repo));
-    persistViewFilters();
-    render();
-  });
-  el.categorySelect.addEventListener('change', () => {
-    state.category = el.categorySelect.value || '';
-    persistViewFilters();
-    render();
+  categoryDd = createDropdown({
+    trigger: el.categoryBtn,
+    panel: el.categoryPanel,
+    title: 'Categories',
+    noun: 'categories',
+    unit: 'ETFs',
+    getItems: () => categoryItems,
+    onChange: applyCategorySelection,
   });
   el.staleToggle.addEventListener('change', () => {
     state.hideStale = Boolean(el.staleToggle.checked);
