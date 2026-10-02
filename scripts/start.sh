@@ -1,9 +1,14 @@
 #!/usr/bin/env bash
 # Run the hub locally in the background: bunx serve . -p PORT  ->  http://localhost:PORT
-# The process id is kept in .serve.pid and the output in .serve.log; stop it with ./scripts/stop.sh
+# The process id and the output are kept in the OS temp directory (one folder per hub checkout, see
+# STATE_DIR below), never in the repository; stop it with ./scripts/stop.sh
 
 set -uo pipefail
 cd "$(dirname "$0")/.." || exit 1
+
+# server state lives in the OS temp directory, in a folder unique to this hub checkout
+STATE_DIR="${TMPDIR:-/tmp}"; STATE_DIR="${STATE_DIR%/}/etfs-hub-$(pwd -P | cksum | cut -d' ' -f1)"
+PID_FILE="$STATE_DIR/.etfs.pid"; LOG_FILE="$STATE_DIR/.etfs.log"
 
 usage() {
   cat <<USAGE
@@ -35,20 +40,21 @@ is_number "$PORT" || die "--port expects a positive number, got '$PORT'"
 export PATH="$HOME/.bun/bin:$PATH"
 command -v bun >/dev/null 2>&1 || { echo "start.sh: bun is not installed; run ./scripts/install.sh first" >&2; exit 1; }
 
-if [ -f .serve.pid ] && kill -0 "$(cat .serve.pid)" 2>/dev/null; then
-  echo "already running (pid $(cat .serve.pid)): $(grep -m1 -o 'http://localhost:[0-9]*' .serve.log 2>/dev/null || echo "http://localhost:$PORT")"
+if [ -f $PID_FILE ] && kill -0 "$(cat $PID_FILE)" 2>/dev/null; then
+  echo "already running (pid $(cat $PID_FILE)): $(grep -m1 -o 'http://localhost:[0-9]*' $LOG_FILE 2>/dev/null || echo "http://localhost:$PORT")"
   exit 0
 fi
 
-nohup bunx serve . -p "$PORT" > .serve.log 2>&1 &
-echo $! > .serve.pid
+mkdir -p "$STATE_DIR" || { echo "start.sh: cannot create $STATE_DIR" >&2; exit 1; }
+nohup bunx serve . -p "$PORT" > $LOG_FILE 2>&1 &
+echo $! > $PID_FILE
 sleep 2
-if kill -0 "$(cat .serve.pid)" 2>/dev/null; then
-  echo "started (pid $(cat .serve.pid)): $(grep -m1 -o 'http://localhost:[0-9]*' .serve.log || echo "http://localhost:$PORT")"
-  echo "log: .serve.log   stop with: ./scripts/stop.sh"
+if kill -0 "$(cat $PID_FILE)" 2>/dev/null; then
+  echo "started (pid $(cat $PID_FILE)): $(grep -m1 -o 'http://localhost:[0-9]*' $LOG_FILE || echo "http://localhost:$PORT")"
+  echo "log: $LOG_FILE"; echo "stop with: ./scripts/stop.sh"
 else
-  echo "start.sh: the server failed to start, see .serve.log:" >&2
-  cat .serve.log >&2
-  rm -f .serve.pid
+  echo "start.sh: the server failed to start, see $LOG_FILE:" >&2
+  cat $LOG_FILE >&2
+  rm -f $PID_FILE
   exit 1
 fi
