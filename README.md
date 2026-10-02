@@ -1,61 +1,65 @@
 # ETFs
 
-One page that works as every brand's ETF holdings-to-watchlist app at once. It reads the public static feeds of the 29 sibling applications at runtime and shows the union of all brands in one table with the same look, feel, columns and business logic as a sibling app, so you can, for example, sort every ETF of every brand by TR 1Y descending and build a Watchlist that mixes funds of different brands. Selecting funds of several brands aggregates their holdings together: the Watchlist shows how many of the selected funds hold each ticker and the summed and maximum weights, so overlapping exposure across issuers becomes visible. A single-file client-side tool: `index.html`, `app.tsx` (compiled in the browser by Babel standalone, Tailwind from a CDN) and `favicon.ico`, with no build step, no bundler, no dependencies, no data files and no aggregator
+One of the app's features lets you select ETFs of any brand in the Watchlist and aggregate their holdings to see how often each ticker appears across the selected funds. Repeated holdings make overlapping exposure visible: the more selected funds include a ticker, the greater its potential influence on the portfolio; gains in that holding may help, while declines may hurt, and actual impact also depends on each fund's position size. Another feature makes it faster and easier to find funds with stronger growth over different periods, higher dividend yields or distributions, greater Total Return (price performance plus dividends), and other key performance metrics, across all brands at once: for example, sort every ETF of every brand by TR 1Y descending and build a Watchlist that mixes funds of different brands. A single-file client-side tool that reads the generated `api/<slug>` static feeds of the 29 sibling applications at runtime into one searchable ETF catalog with per-fund tabs, cross-brand watchlist aggregation, ticker copy and CSV/TXT export - the same look, feel, columns and business logic as the sibling applications, with no build step, no bundler, no dependencies, no data files and no aggregator
 
 ## Using Bun
+
+```bash
+bunx degit daggerok/ETFs#main ./12345 && cd $_
+bunx serve . -p 1234
+open http://0:1234
+```
+
+The application is published at <https://daggerok.github.io/ETFs/>. The Pages deployment comes only from `main`.
+
+The degit quick start gives only the hub files, so the data is loaded from the sibling applications' GitHub Pages feeds. For fully local data, clone the hub and the sibling repositories next to it:
 
 ```bash
 git clone https://github.com/daggerok/ETFs && cd ETFs
 ./scripts/install.sh --depth 1
 bunx serve . -p 1234
-open http://0:1234
 ```
 
-The app is live at <https://daggerok.github.io/ETFs/> (GitHub Pages, deployed from the `main` branch)
-
-`./scripts/install.sh` clones the 29 sibling repositories next to the hub, into subfolders of this folder, and ignores them in this repository's `.gitignore`:
+`./scripts/install.sh` clones the 29 sibling repositories into subfolders of the hub folder (they are ignored by the hub's `.gitignore`):
 
 - no arguments clones all of them with full history; `--depth 1` (`-d 1`) is the fastest and smallest way to just run the app
 - repositories can be listed positionally, separated by spaces and/or commas, case-insensitive: `./scripts/install.sh VanEck Tema` or `./scripts/install.sh VanEck,Tema`
 - `-s` / `--ssh` clones over SSH instead of HTTPS, `-p N` / `--parallel N` sets the parallel clones (default 1), `-h` / `--help` prints the usage
 
-`./scripts/update.sh` fetches and fast-forwards `main` of every cloned repository to get fresh data. It takes the same style of arguments: no arguments updates every cloned repository, repositories can be listed positionally (`./scripts/update.sh VanEck Tema` or `VanEck,Tema`), `-p N` / `--parallel N` sets how many are updated in parallel (default 1) and `-h` / `--help` prints the usage. Output is printed per repository as one block and the exit code is non-zero if any repository failed. Both scripts resolve the hub root from their own location, so they work from any working directory
+`./scripts/update.sh` fetches and fast-forwards `main` of every cloned repository to get fresh data. It takes the same style of arguments: no arguments updates every cloned repository, repositories can be listed positionally (`./scripts/update.sh VanEck Tema` or `VanEck,Tema`), `-p N` / `--parallel N` sets how many are updated in parallel (default 1) and `-h` / `--help` prints the usage. Output is printed per repository as one block and the exit code is non-zero if any repository failed. Both scripts resolve the hub root from their own location, so they work from any working directory. Every cloned repository stays an independent git repository, so you can develop, commit and open pull requests in any of them separately.
 
-Every cloned repository stays an independent git repository, so you can develop, commit and open pull requests in any of them separately
+### Data sources
 
-To serve the hub together with the siblings, run `bunx serve . -p 1234` from the folder that contains the sibling repositories, that is the hub folder after `install.sh`
-
-### Where the data comes from
-
-Each brand repository publishes a standard feed: `api/<slug>/index.json` plus per-fund `funds/<TICKER>/meta.json`, `holdings/NNN.json` and `history/NNN.json` pages. The hub chooses the base URL of every brand like this:
+Each brand repository publishes the standard feed `api/<slug>/index.json` plus per-fund `funds/<TICKER>/meta.json`, `holdings/NNN.json` and `history/NNN.json` pages; the hub only reads them. The base URL of every brand is chosen like this:
 
 | Situation | Base URL |
 | --- | --- |
 | `location.hostname` ends with `github.io` | `https://daggerok.github.io/<Repo>/api/<slug>/` |
-| anything else, such as local `bunx serve . -p 1234` | `./<Repo>/api/<slug>/` (the sibling folder next to the hub) |
-| `?api=remote` | forces `https://daggerok.github.io/<Repo>/api/<slug>/`, so local development can test production data |
-| `?api=local` | forces `./<Repo>/api/<slug>/` |
+| anything else, such as local `bunx serve . -p 1234` | `./<Repo>/api/<slug>/`, the sibling folder next to the hub; when that brand's `index.json` is missing or fails (for example after `degit`, where no sibling folders exist) the brand is retried from `https://daggerok.github.io/<Repo>/api/<slug>/`, and that base is then used for the brand's per-fund files too; such brands get a small `remote` badge in the brand filter |
+| `?api=remote` | always `https://daggerok.github.io/<Repo>/api/<slug>/`, so local development can test production data |
+| `?api=local` | strictly `./<Repo>/api/<slug>/`, no fallback |
 
-GitHub Pages serves every site with `access-control-allow-origin: *`, so reading the feeds of 29 sites from the hub (or from `localhost` with `?api=remote`) needs no proxy
+GitHub Pages serves every site with `access-control-allow-origin: *`, so reading the feeds from the hub or from `localhost` needs no proxy. The feeds themselves come from the issuers' public pages, SEC EDGAR and Yahoo Finance.
 
-### How it works
+How it works:
 
-- Startup: the 29 brand indexes are fetched in parallel by a pool of 8 workers with a progress counter. A brand that fails (404, network, 25 s timeout) is marked unavailable with a small badge and everything else keeps working
-- Cache: every brand index is stored in IndexedDB keyed by origin, api mode and repo together with its `generatedAt`, and revalidated with `fetch(url, { cache: 'no-cache' })`. The first paint comes from the cache when one exists; a brand that cannot be revalidated keeps serving its cached copy. Every storage access is wrapped in try/catch, so the page also works with storage blocked
-- Memory: rows are normalized once into compact structures: Float64Arrays for the sortable numerics (NaN means unavailable), integer dictionary ids for brand, category and returns basis, and a lowercase search string per fund. About 2,500 funds sort and filter in a few milliseconds. The DOM is windowed: 200 rows are mounted and more are appended while you scroll
-- Sorting: unavailable values (`null` in the feed) always sort last, in both directions, and are shown as a dash, never as `0`
-- Filters: search (ticker, name, brand, category), brand multi-select, category select and the `Hide stale returns (older than N days)` toggle, which hides funds whose `performanceAsOf` is older than N days (default 45) or unknown; it is off by default
-- Source badge: each row shows `metrics.returnsBasis` as a badge (`NAV` official, `mixed` official with derived gaps, `derived` computed from price or NAV history, `n/a`) and the `performanceAsOf` date as Return As Of
-- Watchlist: the Use checkboxes (persisted in `localStorage` per brand and ticker, so `VanEck:GDX` and `iShares:IVV` can sit together) select funds across brands; their holdings pages are loaded on demand from each fund's own brand base and aggregated by ticker (CUSIP, ISIN, identifier or name when a position has no ticker), with Copy Tickers and CSV and TXT export
-- Detail tabs: Overview, Holdings, History and Distributions of the active fund are loaded on demand from its brand
+- Startup: the 29 brand indexes are fetched in parallel by a pool of 8 workers with a progress counter; a brand that fails (404, network, 25 s timeout) is marked unavailable with a small badge and everything else keeps working
+- Cache: every brand index is stored in IndexedDB keyed by origin, api mode and repo together with its `generatedAt`, and revalidated with `fetch(url, { cache: 'no-cache' })`; the first paint comes from the cache when one exists. Every storage access is wrapped in try/catch
+- Memory: rows are normalized once into Float64Arrays for the sortable numerics (NaN means unavailable) and small integer dictionaries for brand, category and returns basis, so about 2,500 funds sort and filter in a few milliseconds; the DOM is windowed (200 rows, more are appended while you scroll)
+- Sorting: unavailable values always sort last, in both directions, and are shown as a dash, never as `0`
+- Filters: search (ticker, name, brand, category), brand multi-select, category select and `Hide stale returns (older than N days)`, which hides funds whose `performanceAsOf` is older than N days (default 45) or unknown; it is off by default
+- Source badge: each row shows `metrics.returnsBasis` as a badge (`NAV` official, `mixed` official with derived gaps, `derived` computed from price or NAV history, `n/a`) and `performanceAsOf` as Return As Of
+- Watchlist: Use checkboxes (persisted in `localStorage` per brand and ticker) select funds across brands; their holdings pages are loaded on demand from each fund's own brand base and aggregated by ticker (CUSIP, ISIN, identifier or name when a position has no ticker); detail tabs (Overview, Holdings, History, Distributions) load on demand the same way
 
 ### Metrics and caveats
 
-Returns come from different sources and different dates: an issuer's official NAV table, a month-end or quarter-end series, or an estimate derived from Yahoo Finance prices. Compare funds with the source badge and the Return As Of column in view, and use the stale toggle to drop old figures. Unavailable values are never published as zero: they are a dash in the table and sort last. The hub shows exactly what each brand feed publishes (the `metrics` contract is the same for all brands: `ytd`, `tr1y`, `tr3y`, `tr5y`, `tr10y`, `cagr3y`, `cagr5y`, `cagr10y`, `siAnn`, `dividendYield`, `secYield`, `returnsBasis`, `performanceAsOf`), so it is only as fresh as the latest run of each brand's updater. Selecting very many funds at once loads holdings of every selected fund (several requests each), so selecting more than 150 at once asks for confirmation
+Returns come from different sources and different dates: an issuer's official NAV table, a month-end or quarter-end series, or an estimate derived from Yahoo Finance prices. Compare funds with the source badge and the Return As Of column in view, and use the stale toggle to drop old figures. Unavailable data is never published as zero: it is a dash in the table and sorts last.
+
+The hub shows exactly what each brand feed publishes under the shared `metrics` contract (`ytd`, `tr1y`, `tr3y`, `tr5y`, `tr10y`, `cagr3y`, `cagr5y`, `cagr10y`, `siAnn`, `dividendYield`, `secYield`, `returnsBasis`, `performanceAsOf`), so it is only as fresh as the latest run of each brand's updater. Selecting more than 150 funds at once asks for confirmation, because holdings of every selected fund are loaded (several requests each).
 
 ## TypeScript and verification
 
-The browser app is intentionally build-free: `index.html` carries the markup, styles and bootstrap, and `app.tsx` is TypeScript compiled in the browser with Babel standalone, with no `tsconfig.json` and no TypeScript dependency. The hub has no updater, tests, workflows or data files
+The browser app is intentionally build-free: `index.html` carries the markup, styles and bootstrap, and `app.tsx` is TypeScript compiled in the browser with Babel standalone - no build step, no bundler, no `tsconfig.json` needed. Bun runs TypeScript out of the box.
 
 Verification before every publish:
 
@@ -63,6 +67,8 @@ Verification before every publish:
 bun build --target=bun app.tsx --outfile=/dev/null
 git diff --check
 ```
+
+The hub has no updater, tests, workflows or data files; the data is updated in the sibling repositories.
 
 ## Brands table
 
