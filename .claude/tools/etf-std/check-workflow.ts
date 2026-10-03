@@ -24,6 +24,7 @@ for (const d of process.argv.slice(2)) {
   if (!/timeout-minutes: 30/.test(txt)) errs.push('timeout-minutes: 30 missing');
   if (!txt.includes("credential.helper='!f()") || !txt.includes('GITHUB_TOKEN: ${{ github.token }}')) errs.push('runtime-only token push missing');
   if (!txt.includes('git pull --rebase')) errs.push('push must rebase and retry when main moved');
+  if (!/DISPATCH_INPUTS \|\| "\{\}"\) \|\| \{\}/.test(txt)) errs.push('resolver must guard inputs: toJSON(inputs) is "null" on scheduled runs (JSON.parse(...) || {})');
   console.log(errs.length ? `FAIL ${d}: ${errs.join('; ')}` : `ok   ${d} (${names.length} inputs)`); bad += errs.length ? 1 : 0;
 }
 process.exit(bad ? 1 : 0);
