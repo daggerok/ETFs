@@ -6,6 +6,10 @@
 set -uo pipefail
 cd "$(dirname "$0")/.." || exit 1
 
+# the whole body is one brace group: bash parses it completely before running anything, so
+# replacing this file mid-run (git pull) cannot make bash resume reading at a stale offset
+{
+
 usage() {
   cat <<USAGE
 Usage: ./scripts/update.sh [options] [repo ...]
@@ -120,3 +124,5 @@ failed=$(grep -L '^0$' "$OUT"/*.code 2>/dev/null | wc -l | tr -d ' ')
 ok=$(grep -l '^0$' "$OUT"/*.code 2>/dev/null | wc -l | tr -d ' ')
 echo "Done: $ok updated, $failed failed."
 [ "$failed" -eq 0 ] || exit 1
+}
+exit $?

@@ -8,6 +8,10 @@
 set -uo pipefail
 cd "$(dirname "$0")/.." || exit 1
 
+# the whole body is one brace group: bash parses it completely before running anything, so
+# replacing this file mid-run (git pull) cannot make bash resume reading at a stale offset
+{
+
 OWNER=daggerok
 REPOS=(AAM aberdeen Amplify ARK Capital-Group Fidelity First-Trust Franklin Global-X Goldman-Sachs Invesco iShares JPMorgan Neos Northern-Trust Pacer Parametric ProShares Schwab SP-Funds SPDR Sprott Tema Themes VanEck Vanguard VictoryShares WisdomTree Xtrackers)
 
@@ -114,3 +118,5 @@ echo
 echo "Done: $cloned cloned, $skipped skipped, $failed failed."
 if [ "$failed" -gt 0 ]; then echo "Re-run ./scripts/install.sh to retry the failed ones (needs network access to github.com)." >&2; exit 1; fi
 echo "Next: bunx serve . -p 1234   (open http://localhost:1234)   |   ./scripts/update.sh pulls fresh data later"
+}
+exit $?
