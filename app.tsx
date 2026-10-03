@@ -30,8 +30,8 @@ type WatchlistRow = Record<string, any> & {
   name: string;
   funds: string[];
   fundCount: number;
-  weightSum: number;
-  maxWeight: number;
+  weightSum: number | null;
+  maxWeight: number | null;
   cusips: string[];
   identifier: string;
   searchIndex: string;
@@ -83,6 +83,7 @@ const VIEW_FILTERS_KEY = 'etf-hub-view-filters';
 const GITHUB_PAGES_ORIGIN = 'https://daggerok.github.io/';
 const BRAND_CONCURRENCY = 8; // parallel brand index requests at startup
 const BRAND_TIMEOUT_MS = 25000;
+const FETCH_TIMEOUT_MS = 30000; // meta.json and holdings/history pages (headers and body)
 const HOLDINGS_CONCURRENCY = 6; // bounded whole-selection aggregation workers
 const WATCHLIST_CHUNK = 250; // rows per rendered Watchlist DOM chunk
 const CATALOG_CHUNK = 200; // rows per rendered catalog DOM chunk
@@ -104,7 +105,7 @@ const NUMERIC_SHEET_HEADERS = ['Weight', 'Weight (%)', 'Market Weight', 'Shares 
 // Sortable numeric columns of the catalog: the metrics block of every feed row
 // plus a few top level numbers. NaN means unavailable (always sorts last).
 const METRIC_KEYS = ['ytd', 'tr1y', 'tr3y', 'tr5y', 'tr10y', 'cagr3y', 'cagr5y', 'cagr10y', 'siAnn', 'dividendYield', 'secYield'];
-const FUND_NUM_KEYS = ['aumValue', 'terValue', 'navValue'];
+const FUND_NUM_KEYS = ['aumValue', 'terValue', 'terGrossValue', 'navValue'];
 const STRING_SORT_KEYS = ['ticker', 'name', 'brand', 'category', 'dividendFrequency'];
 const ASC_FIRST_KEYS = ['ticker', 'name', 'brand', 'category', 'dividendFrequency', 'symbol', 'section', 'metric', 'identifier', 'label'];
 
@@ -121,7 +122,7 @@ const COLUMN_TOOLTIPS: Record<string, string> = {
   SEDOL: 'SEDOL - Stock Exchange Daily Official List identifier.',
   NAV: 'NAV (Net Asset Value) - per-share dollar value of the fund.',
   'Net Assets': 'Net Assets (AUM) - total market value of all fund assets minus liabilities.',
-  Expense: 'Expense Ratio (TER) - total annual fund operating expenses as a % of assets, as published by the issuer.',
+  Expense: 'Expense Ratio (TER), NET - total annual fund operating expenses after waivers as a % of assets, as published by the issuer. Hover a value for the gross ratio when published.',
   Weight: 'Weight - position weight as a percentage of the fund\'s total net assets.',
   'Weight (%)': 'Weight - position weight as a percentage of the fund\'s total net assets.',
   'Weight Sum': 'Weight Sum - summed weight of this holding across all selected ETFs (%).',
@@ -294,6 +295,8 @@ const metaInFlight: Map<string, Promise<any>> = new Map();
 const holdingsChains: Map<string, Promise<void>> = new Map();
 const holdingsComplete = new Set<string>();
 const holdingsInFlight = new Set<string>();
+const holdingsFailed = new Set<string>(); // fetch failed: not complete, retried after the fund is selected again
+const metaFailures = new Set<string>();
 let watchlistChunkSig = '';
 let watchlistRenderedCount = 0;
 let watchlistRefreshTimer: any = null;
@@ -442,10 +445,10 @@ function getHeaderTooltip(header: string): string {
   return clean;
 }
 
-async function copyText(text: string): Promise<void> {
+async function copyText(text: string): Promise<boolean> {
   try {
     await navigator.clipboard.writeText(text);
-    return;
+    return true;
   } catch {
     // Fall through to the legacy path.
   }
@@ -456,8 +459,10 @@ async function copyText(text: string): Promise<void> {
   document.body.appendChild(textarea);
   textarea.focus();
   textarea.select();
-  document.execCommand('copy');
+  let ok = false;
+  try { ok = document.execCommand('copy'); } catch { ok = false; }
   textarea.remove();
+  return ok;
 }
 
 function downloadText(text: string, fileName: string, mime: string): void {
@@ -469,16 +474,28 @@ function downloadText(text: string, fileName: string, mime: string): void {
   document.body.appendChild(link);
   link.click();
   link.remove();
-  URL.revokeObjectURL(url);
+  setTimeout(() => URL.revokeObjectURL(url), 10000); // revoking at once can abort the download in Safari and Firefox
+}
+
+const PLAIN_NUMBER = /^[+-]?(\d+\.?\d*|\.\d+)(e[+-]?\d+)?%?$/i;
+
+/** Spreadsheet formula injection guard: a text cell that starts with = + - @ TAB or CR gets a leading apostrophe (plain numbers are left alone). */
+function neutralizeFormula(value: string): string {
+  return /^[=+\-@\t\r]/.test(value) && !PLAIN_NUMBER.test(value) ? `'${value}` : value;
 }
 
 function toCsv(rows: string[][]): string {
   return rows
     .map(row => row.map(cell => {
-      const value = String(cell ?? '');
-      return /[",\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
+      const value = neutralizeFormula(String(cell ?? ''));
+      return /[",\r\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
     }).join(','))
-    .join('\n');
+    .join('\r\n');
+}
+
+/** One TXT line cell: tabs and line breaks would break the columns. */
+function txtCell(cell: unknown): string {
+  return String(cell ?? '').replace(/[\t\r\n]+/g, ' ');
 }
 
 function exportFileName(scope: string, extension: string): string {
@@ -532,7 +549,7 @@ function brandBase(brand: Brand): string {
   return API_MODE === 'remote' || remoteFallback.has(brand.repo) ? remoteBase(brand) : localBase(brand);
 }
 
-async function fetchJson(url: string, timeoutMs = 0): Promise<any> {
+async function fetchJson(url: string, timeoutMs = FETCH_TIMEOUT_MS): Promise<any> {
   const controller = typeof AbortController === 'function' ? new AbortController() : null;
   const timer = controller && timeoutMs > 0 ? setTimeout(() => controller.abort(), timeoutMs) : null;
   try {
@@ -596,14 +613,22 @@ function cacheKey(brandIndex: number): string {
   return `${location.origin}|${API_MODE}|${BRANDS[brandIndex].repo}`;
 }
 
+/**
+ * returnsBasis class: 1 official, 2 mixed (official with gaps filled from Yahoo or estimates),
+ * 3 derived/estimate (not official), NaN none. Texts that merely NEGATE a source ("no Yahoo or
+ * market-price estimates", "not derived from Yahoo", "Yahoo ... is not used") do not count as
+ * gap filling, and exact math on official figures ("derived from the published annualized
+ * values") stays official.
+ */
 function classifyBasis(text: unknown): number {
   const t = String(text ?? '').trim().toLowerCase();
   if (!t || t === 'unavailable' || t === '-' || t.startsWith('none')) return NaN;
-  const official = t.startsWith('official');
-  const derived = /(derived|estimat|yahoo|adjusted market|market-price)/.test(t);
-  if (official && derived) return 2;
-  if (official) return 1;
-  return 3;
+  if (!/^(last published )?official/.test(t)) return 3;
+  const positive = t
+    .replace(/\bnot derived from yahoo[^;]*/g, '')
+    .replace(/\byahoo[^;]*\bis not used[^;]*/g, '')
+    .replace(/\bno yahoo[^;]*/g, '');
+  return /(filled|missing|omits|where published|yahoo|estimat|does not publish|did not publish)/.test(positive) ? 2 : 1;
 }
 
 /** Plain-language words of the returns basis, so a search for "official" or "estimate" finds those funds. */
@@ -938,16 +963,19 @@ async function loadFundMeta(key: string): Promise<any> {
   if (inflight) return inflight;
   const known = fundRaw(key);
   if (!known) return null;
-  if (!known.holdings && !known.history) {
+  if (known.dataFile === null || (!known.holdings && !known.history)) { // no per-fund files published
     fundMetaCache.set(key, null);
     return null;
   }
   const request = (async () => {
     try {
       const meta = await fetchJson(`${fundBaseUrl(key)}funds/${encodeURIComponent(keyTicker(key))}/meta.json`);
+      if (!meta || typeof meta !== 'object') throw new Error('malformed meta.json');
+      metaFailures.delete(key);
       fundMetaCache.set(key, meta);
       return meta;
     } catch (error) {
+      metaFailures.add(key);
       console.warn(`Failed to load meta.json for ${key}:`, error);
       return null;
     }
@@ -967,6 +995,7 @@ function resetSheetPaging(): void {
 async function fetchPage(key: string, pagePath: string): Promise<{ headers: string[]; rows: string[][] }> {
   const path = String(pagePath).replace(/^\.?\//, '');
   const page = await fetchJson(`${fundBaseUrl(key)}funds/${encodeURIComponent(keyTicker(key))}/${path}`);
+  if (!page || typeof page !== 'object') throw new Error('malformed page');
   const headers: string[] = Array.isArray(page.headers) ? page.headers : [];
   const rows: any[] = Array.isArray(page.rows) ? page.rows : [];
   return { headers, rows: rows.map(row => headers.map(header => String(row[header] ?? ''))) };
@@ -1013,10 +1042,8 @@ async function loadNextSheetPage(sheet: 'holdings' | 'history'): Promise<void> {
   entry.loading = true;
   renderStaticLoadSentinel();
   try {
-    const generation = sheetGeneration;
     await appendSheetPage(fund, entry);
-    if (generation !== sheetGeneration) return;
-    if (state.activeTab === `detail:${sheet}`) render();
+    if (state.activeFundKey === fund && state.activeTab === `detail:${sheet}`) render();
   } catch (error) {
     console.error(`Failed to load ${fund} ${sheet} page:`, error);
   } finally {
@@ -1028,17 +1055,26 @@ async function loadNextSheetPage(sheet: 'holdings' | 'history'): Promise<void> {
 /** True while any selected ETF's holdings have not finished loading. */
 function isHoldingsLoading(): boolean {
   for (const key of selectedKeys()) {
-    if (!holdingsComplete.has(key)) return true;
+    if (!holdingsComplete.has(key) && !holdingsFailed.has(key)) return true;
   }
   return false;
 }
 
-/** Loads every holdings page of one fund inside its chain (no duplicate or skipped pages). */
-async function loadAllHoldingsForFund(key: string): Promise<void> {
-  await withFundChain(key, async () => {
-    if (!state.selected.has(key)) return; // deselected while queued: skip
+/**
+ * Loads every holdings page of one fund inside its chain (no duplicate or skipped pages).
+ * Resolves true only when the fund's holdings are really complete (or the fund honestly has
+ * none); false when it was deselected midway (the partial entry is kept and resumed later).
+ * Throws when meta.json or a page could not be fetched.
+ */
+async function loadAllHoldingsForFund(key: string): Promise<boolean> {
+  return withFundChain(key, async () => {
+    if (!state.selected.has(key)) return false; // deselected while queued: skip
     const meta = await loadFundMeta(key);
-    if (!meta || !meta.holdings || !Array.isArray(meta.holdings.pages) || !meta.holdings.pages.length) return;
+    if (!meta) {
+      if (metaFailures.has(key)) throw new Error('meta.json unavailable');
+      return true; // catalog-only fund: no holdings published
+    }
+    if (!meta.holdings || !Array.isArray(meta.holdings.pages) || !meta.holdings.pages.length) return true;
     const sheet = `${key}:holdings`;
     let entry = sheetState.get(sheet);
     if (!entry) {
@@ -1046,9 +1082,10 @@ async function loadAllHoldingsForFund(key: string): Promise<void> {
       sheetState.set(sheet, entry);
     }
     while (entry.nextPage < entry.manifest.pages.length) {
-      if (!state.selected.has(key)) return; // deselected mid-load: skip the rest
+      if (!state.selected.has(key)) return false; // deselected mid-load: resume on the next selection
       await fetchNextSheetPage(key, entry); // chain already held: no re-queue
     }
+    return true;
   });
 }
 
@@ -1058,7 +1095,8 @@ async function loadAllHoldingsForFund(key: string): Promise<void> {
  * overload the static feeds; holdings are cached under each fund's own key.
  */
 async function ensureHoldingsForSelection(): Promise<void> {
-  const queue = selectedKeys().filter(key => !holdingsComplete.has(key) && !holdingsInFlight.has(key));
+  holdingsFailed.forEach(key => { if (!state.selected.has(key)) holdingsFailed.delete(key); }); // deselect clears a failure: re-select retries
+  const queue = selectedKeys().filter(key => !holdingsComplete.has(key) && !holdingsInFlight.has(key) && !holdingsFailed.has(key));
   if (!queue.length) return;
   queue.forEach(key => holdingsInFlight.add(key));
   const workers = Array.from({ length: Math.min(HOLDINGS_CONCURRENCY, queue.length) }, async () => {
@@ -1066,11 +1104,10 @@ async function ensureHoldingsForSelection(): Promise<void> {
       const key = queue.shift();
       if (!key) break;
       try {
-        await loadAllHoldingsForFund(key);
-        holdingsComplete.add(key);
+        if (await loadAllHoldingsForFund(key)) holdingsComplete.add(key);
       } catch (error) {
         console.error(`Failed to load ${key} holdings:`, error);
-        holdingsComplete.add(key);
+        holdingsFailed.add(key);
       } finally {
         holdingsInFlight.delete(key);
         if (state.selected.size > 0) {
@@ -1282,7 +1319,8 @@ function getSelectedTabs(): TabInfo[] {
   const activeFund = getActiveFund();
 
   if (activeFund) {
-    DETAIL_TABS.forEach(tab => {
+    const hasFiles = activeFund.raw.dataFile !== null; // dataFile null: no per-fund meta.json, only the overview
+    DETAIL_TABS.filter(tab => hasFiles || tab.key === 'overview').forEach(tab => {
       tabs.push({
         id: `detail:${tab.key}`,
         label: tab.key === 'overview' ? `${activeFund.ticker} ${tab.label}` : tab.label,
@@ -1294,7 +1332,8 @@ function getSelectedTabs(): TabInfo[] {
   if (selectedKeys().length > 0) {
     const rowCount = getDedupedWatchlistRows().length;
     // While holdings are still loading, never show a misleading exact count.
-    const count = isHoldingsLoading() ? (rowCount ? `${rowCount}+` : 'Loading…') : rowCount;
+    const incomplete = isHoldingsLoading() || selectedKeys().some(key => !holdingsComplete.has(key));
+    const count = incomplete ? (rowCount ? `${rowCount}+` : isHoldingsLoading() ? 'Loading…' : 0) : rowCount;
     tabs.push({ id: 'watchlist', label: 'Watchlist', count });
   }
 
@@ -1457,7 +1496,9 @@ function applyBrandSelection(selected: Set<string>): void {
 }
 
 function applyCategorySelection(selected: Set<string>): void {
-  state.hiddenCategories = new Set(categoryItems.map(item => item.id).filter(name => !selected.has(name)));
+  const known = new Set(categoryItems.map(item => item.id));
+  const unseen = [...state.hiddenCategories].filter(name => !known.has(name)); // categories of brands not loaded yet stay hidden
+  state.hiddenCategories = new Set([...categoryItems.map(item => item.id).filter(name => !selected.has(name)), ...unseen]);
   persistViewFilters();
   render();
 }
@@ -2219,7 +2260,7 @@ function fundRowHtml(id: number, index: number): string {
           <td class="py-2.5 px-4 text-slate-600 dark:text-slate-300">${escapeHtml(s.categoryText[id] || DASH)}</td>
           <td class="${numCls}">${escapeHtml(raw.nav || DASH)}</td>
           <td class="${numCls}">${formatMoney(num.aumValue[id])}</td>
-          <td class="${numCls}">${escapeHtml(raw.ter || DASH)}</td>
+          ${terCell(id)}
           ${pct('dividendYield')}
           ${pct('secYield')}
           <td class="py-2.5 px-4 text-slate-700 dark:text-slate-300">${escapeHtml(s.freqText[id] || DASH)}</td>
@@ -2240,6 +2281,17 @@ function fundRowHtml(id: number, index: number): string {
           <td class="py-2.5 px-4 font-mono text-slate-600 dark:text-slate-400">${escapeHtml(raw.asOfDate || DASH)}</td>
         </tr>
       `;
+}
+
+/** Expense ratio cell: NET (terValue) shown, GROSS (terGrossValue) in the tooltip when published. */
+function terCell(id: number): string {
+  const s = store;
+  if (!s) return '';
+  const net = s.num.terValue[id];
+  const gross = s.num.terGrossValue[id];
+  const text = Number.isFinite(net) ? `${net.toFixed(2)}%` : (s.raw[id].ter || DASH);
+  const tip = Number.isFinite(gross) ? ` title="Net expense ratio. Gross (before waivers): ${gross.toFixed(2)}%"` : '';
+  return `<td class="py-2.5 px-4 text-right font-mono text-slate-700 dark:text-slate-300"${tip}>${escapeHtml(text)}</td>`;
 }
 
 const CATALOG_COLSPAN = 27;
@@ -2309,7 +2361,7 @@ function renderFundsTable(): void {
   bindSelectAllCheckbox();
 
   if (!ids.length) {
-    const message = !store
+    const message = !store || (store.n === 0 && !state.loading && loadedBrandCount() === 0)
       ? (state.loading ? `Loading ETF catalogs of ${BRANDS.length} brands…` : 'No brand feed could be loaded. Check the network or serve this folder next to the cloned sibling repositories (bunx serve . -p 1234).')
       : 'No ETFs match your search and filters.';
     el.tableBody.innerHTML = `<tr><td colspan="${CATALOG_COLSPAN}" class="py-12 text-center text-slate-400 dark:text-slate-500">${escapeHtml(message)}</td></tr>`;
@@ -2329,7 +2381,7 @@ function renderFundsTable(): void {
 
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 
-type HoldingPosition = { fund: string; name: string; identifier: string; weight: number; cells: Record<string, unknown> };
+type HoldingPosition = { fund: string; name: string; identifier: string; weight: number | null; cells: Record<string, unknown> };
 
 const MISSING_TOKENS = new Set(['', '-', '--', '—', '–', 'N/A', 'NA', 'NONE', 'NULL']);
 
@@ -2398,7 +2450,7 @@ function sheetPositions(key: string): HoldingPosition[] {
       fund: key,
       name: String(firstCell(cells, ['Name', 'Security Name', 'Description'])).trim(),
       identifier: cleanKeyPart(rawIdentifier) ? rawIdentifier : '',
-      weight: weight === null ? 0 : weight,
+      weight,
       cells,
     };
   });
@@ -2428,8 +2480,8 @@ function getDedupedWatchlistRows(): WatchlistRow[] {
           name: position.name,
           funds: [],
           fundCount: 0,
-          weightSum: 0,
-          maxWeight: 0,
+          weightSum: null,
+          maxWeight: null,
           cusips: [],
           identifier: '',
           searchIndex: '',
@@ -2437,8 +2489,10 @@ function getDedupedWatchlistRows(): WatchlistRow[] {
         map.set(resolved.key, row);
       }
       if (!row.funds.includes(position.fund)) row.funds.push(position.fund);
-      row.weightSum += position.weight;
-      row.maxWeight = Math.max(row.maxWeight, position.weight);
+      if (position.weight !== null) { // an unpublished weight stays unavailable, never 0
+        row.weightSum = (row.weightSum ?? 0) + position.weight;
+        row.maxWeight = row.maxWeight === null ? position.weight : Math.max(row.maxWeight, position.weight);
+      }
       if (position.identifier && !row.cusips.includes(position.identifier)) row.cusips.push(position.identifier);
       if (position.name) row.name = position.name;
     });
@@ -2460,7 +2514,7 @@ function getVisibleWatchlistRows(): WatchlistRow[] {
 }
 
 function watchlistChunkSignature(rows: WatchlistRow[]): string {
-  return [state.sortKey, state.sortDir, currentQuery(), rows.length, rows.length ? rows[0].key : ''].join('|');
+  return [state.sortKey, state.sortDir, currentQuery()].join('|'); // not the row count: rows stream in while loading
 }
 
 function growWatchlistChunk(): void {
@@ -2522,8 +2576,8 @@ function renderWatchlistTable(): void {
           </div>
         </td>
         <td class="py-2.5 px-4 text-right font-mono text-slate-700 dark:text-slate-300">${row.fundCount}</td>
-        <td class="py-2.5 px-4 text-right font-mono text-slate-700 dark:text-slate-300">${row.weightSum.toFixed(3)}%</td>
-        <td class="py-2.5 px-4 text-right font-mono text-slate-700 dark:text-slate-300">${row.maxWeight.toFixed(3)}%</td>
+        <td class="py-2.5 px-4 text-right font-mono text-slate-700 dark:text-slate-300">${row.weightSum === null ? DASH : `${row.weightSum.toFixed(3)}%`}</td>
+        <td class="py-2.5 px-4 text-right font-mono text-slate-700 dark:text-slate-300">${row.maxWeight === null ? DASH : `${row.maxWeight.toFixed(3)}%`}</td>
         <td class="py-2.5 px-4 font-mono text-slate-600 dark:text-slate-400 text-xs">${escapeHtml(row.identifier || DASH)}</td>
       </tr>
     `).join('');
@@ -2562,6 +2616,25 @@ function renderEmptyDetail(message: string): void {
   el.tickerCount.textContent = state.activeFundKey ? keyTicker(state.activeFundKey) : '0 ETFs';
 }
 
+/** Filtered + sorted view of a sheet exactly as the table shows it (also used by the exports). */
+function sheetView(headers: string[], sourceRows: string[][]): any[] {
+  return sortRows(filterRows(sourceRows.map((row, sourceIndex) => {
+    const cells: Record<string, unknown> = { values: row, searchIndex: row.join(' ').toLowerCase(), rank: sourceIndex };
+    headers.forEach((header, index) => { cells[`col${index}`] = row[index] ?? ''; });
+    return cells;
+  })));
+}
+
+/** Overview rows exactly as the table shows them (filtered + sorted). */
+function overviewView(fund: FundRef): any[] {
+  return sortRows(filterRows(overviewRows(fund).map(item => ({
+    section: item.section,
+    metric: item.metric,
+    value: item.value === null || item.value === undefined || item.value === '' ? DASH : item.value,
+    searchIndex: `${item.section} ${item.metric} ${item.value}`.toLowerCase(),
+  }))));
+}
+
 function renderSheetTable(fund: FundRef, sheet: 'holdings' | 'history'): void {
   const catalogCount = Number(sheet === 'holdings' ? fund.raw.holdings : fund.raw.history) || 0;
   const entry = sheetState.get(sheetKey(sheet));
@@ -2590,12 +2663,7 @@ function renderSheetTable(fund: FundRef, sheet: 'holdings' | 'history'): void {
   }
 
   const headers = entry.headers;
-  const rows = sortRows(filterRows(entry.rows.map((row, sourceIndex) => {
-    const cells: Record<string, unknown> = { values: row, searchIndex: row.join(' ').toLowerCase() };
-    headers.forEach((header, index) => { cells[`col${index}`] = row[index] ?? ''; });
-    cells.rank = sourceIndex;
-    return cells;
-  })));
+  const rows = sheetView(headers, entry.rows);
 
   el.tableHead.innerHTML = `
     <tr>
@@ -2650,7 +2718,8 @@ function overviewRows(fund: FundRef): Array<{ section: string; metric: string; v
     { section: 'Fund', metric: 'Holdings Source', value: source.holdingsSource || (meta && meta.holdings ? meta.holdings.source : null) },
     { section: 'Fund', metric: 'History Source', value: source.historySource || (meta && meta.history ? meta.history.source : null) },
     { section: 'Fund', metric: 'Provider', value: source.provider },
-    { section: 'Cost', metric: 'TER (Expense Ratio)', value: raw.ter },
+    { section: 'Cost', metric: 'TER (Expense Ratio, net)', value: raw.ter },
+    { section: 'Cost', metric: 'TER Gross', value: store && Number.isFinite(store.num.terGrossValue[fund.id]) ? `${store.num.terGrossValue[fund.id].toFixed(2)}%` : raw.terGross },
     { section: 'Price', metric: 'NAV', value: raw.nav },
     { section: 'Price', metric: 'Close Price', value: raw.closePrice },
     { section: 'Price', metric: 'Premium / Discount', value: raw.premiumDiscount },
@@ -2697,13 +2766,7 @@ function overviewRows(fund: FundRef): Array<{ section: string; metric: string; v
 }
 
 function renderOverviewTable(fund: FundRef): void {
-  const overview = overviewRows(fund);
-  const rows = sortRows(filterRows(overview.map(item => ({
-    section: item.section,
-    metric: item.metric,
-    value: item.value === null || item.value === undefined || item.value === '' ? DASH : item.value,
-    searchIndex: `${item.section} ${item.metric} ${item.value}`.toLowerCase(),
-  }))));
+  const rows = overviewView(fund);
 
   el.tableHead.innerHTML = `
     <tr>
@@ -2741,11 +2804,7 @@ function renderDistributionsTable(fund: FundRef): void {
   const worksheet = meta && meta.distributions ? meta.distributions : { headers: [], rows: [] };
   const headers: string[] = Array.isArray(worksheet.headers) ? worksheet.headers : [];
   const sourceRows: string[][] = Array.isArray(worksheet.rows) ? worksheet.rows : [];
-  const rows = sortRows(filterRows(sourceRows.map((row, sourceIndex) => {
-    const cells: Record<string, unknown> = { values: row, searchIndex: row.join(' ').toLowerCase(), rank: sourceIndex };
-    headers.forEach((header, index) => { cells[`col${index}`] = row[index] ?? ''; });
-    return cells;
-  })));
+  const rows = sheetView(headers, sourceRows);
 
   el.tableHead.innerHTML = `
     <tr>
@@ -3039,9 +3098,12 @@ function syncBlacklistPanelHeight(): void {
 // 10. Actions & exports (CSV, TXT, Copy Tickers)
 // =========================================================================
 
-function currentExportRows(): { headers: string[]; rows: string[][]; scope: string } {
+/** Rows are exactly the visible (filtered + sorted) table rows; `warning` is set when they are not the whole data. */
+function currentExportRows(): { headers: string[]; rows: string[][]; scope: string; warning?: string } {
   if (state.activeTab === 'watchlist') {
+    const loading = selectedKeys().some(key => !holdingsComplete.has(key));
     return {
+      warning: loading ? 'Holdings of some selected ETFs are still loading or failed to load, so the Watchlist is incomplete. Export it anyway?' : undefined,
       headers: ['Ticker', 'Name', 'ETFs', '# ETFs', 'Weight Sum (%)', 'Max Weight (%)', 'Identifiers'],
       rows: getVisibleWatchlistRows().map(row => [
         row.symbol,
@@ -3058,10 +3120,10 @@ function currentExportRows(): { headers: string[]; rows: string[][]; scope: stri
 
   if (state.activeTab === 'detail:overview') {
     const fund = getActiveFund();
-    const rows = fund ? overviewRows(fund) : [];
+    const rows = fund ? overviewView(fund) : [];
     return {
       headers: ['Section', 'Metric', 'Value'],
-      rows: rows.map(row => [row.section, row.metric, String(row.value ?? '')]),
+      rows: rows.map(row => [row.section, row.metric, row.value === DASH ? '' : String(row.value ?? '')]),
       scope: fund ? `${fund.ticker}-overview` : 'overview',
     };
   }
@@ -3070,9 +3132,10 @@ function currentExportRows(): { headers: string[]; rows: string[][]; scope: stri
     const fund = getActiveFund();
     const meta = fund ? fundMetaCache.get(fund.key) : null;
     const worksheet = meta && meta.distributions ? meta.distributions : { headers: [], rows: [] };
+    const dHeaders: string[] = Array.isArray(worksheet.headers) ? worksheet.headers : [];
     return {
-      headers: worksheet.headers || [],
-      rows: worksheet.rows || [],
+      headers: dHeaders,
+      rows: sheetView(dHeaders, Array.isArray(worksheet.rows) ? worksheet.rows : []).map((row: any) => row.values),
       scope: fund ? `${fund.ticker}-distributions` : 'distributions',
     };
   }
@@ -3082,10 +3145,12 @@ function currentExportRows(): { headers: string[]; rows: string[][]; scope: stri
     const fund = getActiveFund();
     const entry = fund ? sheetState.get(sheetKey(sheet)) : null;
     if (entry) {
+      const partial = entry.nextPage < entry.manifest.pages.length;
       return {
         headers: entry.headers,
-        rows: filterRows(entry.rows.map(row => ({ values: row, searchIndex: row.join(' ').toLowerCase() }))).map((row: any) => row.values),
+        rows: sheetView(entry.headers, entry.rows).map((row: any) => row.values),
         scope: fund ? `${fund.ticker}-${sheet}` : sheet,
+        warning: partial ? `Only ${entry.rows.length.toLocaleString('en-US')} of ${(entry.manifest.totalRows || 0).toLocaleString('en-US')} rows are loaded (scroll the table to load more). Export the loaded rows only?` : undefined,
       };
     }
     return { headers: [], rows: [], scope: sheet };
@@ -3134,23 +3199,28 @@ function currentExportRows(): { headers: string[]; rows: string[][]; scope: stri
 
 function copyTickers(): void {
   let values: string[] = [];
-  if (state.activeTab === 'watchlist') values = getVisibleWatchlistRows().map(row => row.symbol);
-  else if (isDetailTab(state.activeTab)) values = currentExportRows().rows.map(row => String(row[0] ?? '')).filter(Boolean);
+  if (state.activeTab === 'watchlist') values = getVisibleWatchlistRows().filter(row => row.key.startsWith('T:')).map(row => row.symbol); // only real tickers, not CUSIP/ISIN/name keys
+  else if (isDetailTab(state.activeTab)) { const fund = getActiveFund(); values = fund ? [fund.ticker] : []; } // detail sheets have no ticker column: copy the shown fund's ticker
   else values = catalogIds().map(id => (store ? store.ticker[id] : ''));
   values = values.sort((a, b) => collator.compare(a, b));
   if (!values.length) return;
-  void copyText(values.join(', ')).then(() => {
+  void copyText(values.join(', ')).then(ok => {
     const oldText = el.copyBtn.textContent;
-    el.copyBtn.textContent = 'Copied!';
+    el.copyBtn.textContent = ok ? 'Copied!' : 'Copy failed';
     setTimeout(() => { el.copyBtn.textContent = oldText || 'Copy Tickers'; }, 1000);
   });
 }
 
+/** False when the rows are incomplete and the user declined the warning. */
+function confirmExport(warning?: string): boolean {
+  return !warning || typeof confirm !== 'function' || confirm(warning);
+}
+
 function exportCsv(): void {
   const exportData = currentExportRows();
-  if (!exportData.rows.length) return;
+  if (!exportData.rows.length || !confirmExport(exportData.warning)) return;
   downloadText(
-    toCsv([exportData.headers, ...exportData.rows.map(row => row.map(cell => String(cell ?? '')))]),
+    '﻿' + toCsv([exportData.headers, ...exportData.rows.map(row => row.map(cell => String(cell ?? '')))]), // BOM: Excel reads UTF-8
     exportFileName(exportData.scope, 'csv'),
     'text/csv;charset=utf-8;',
   );
@@ -3158,8 +3228,8 @@ function exportCsv(): void {
 
 function exportTxt(): void {
   const exportData = currentExportRows();
-  if (!exportData.rows.length) return;
-  downloadText(exportData.rows.map(row => row.join('\t')).join('\n'), exportFileName(exportData.scope, 'txt'), 'text/plain;charset=utf-8;');
+  if (!exportData.rows.length || !confirmExport(exportData.warning)) return;
+  downloadText([exportData.headers, ...exportData.rows].map(row => row.map(txtCell).join('\t')).join('\n'), exportFileName(exportData.scope, 'txt'), 'text/plain;charset=utf-8;');
 }
 
 // =========================================================================
