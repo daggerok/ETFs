@@ -55,6 +55,19 @@ How it works:
 - Source badge: each row shows `metrics.returnsBasis` as a badge (`NAV` official, `mixed` official with derived gaps, `derived` computed from price or NAV history, `n/a`) and `performanceAsOf` as Return As Of
 - Watchlist: Use checkboxes (persisted in `localStorage` per brand and ticker) select funds across brands; their holdings pages are loaded on demand from each fund's own brand base and aggregated by ticker (CUSIP, ISIN, identifier or name when a position has no ticker); detail tabs (Overview, Holdings, History, Distributions) load on demand the same way
 
+### Column filters
+
+Every sortable column header of All ETFs, Watchlist and the Holdings, History and Distributions tabs has a funnel button that opens a filter popover (a bottom sheet on phones). The funnel turns blue while the column is filtered, active filters appear as chips above the table (click a chip to edit it, the x removes it, `Clear all filters` removes every column filter of the tab) together with the row counts (`2,543 -> 312 ETFs`), and everything is kept in `localStorage` (`etf-hub-column-filters`) and restored on load. Column filters combine with each other, the search box, the brand and category dropdowns, the stale toggle and the blacklist by AND, sorting and selection keep working, and the CSV and TXT exports contain exactly the filtered rows. `Use` and `#` have no filter.
+
+- Types: each column is a string, number, percent, date, datetime or time. The catalog columns take their type from column metadata checked against the values (a date column that holds times becomes datetime); the detail sheets are detected from up to 400 non-empty values, where 80% must match a type (otherwise the column stays text), fixed-width digit-only identifiers and values with leading zeros stay text, and placeholders such as `-` and `N/A` are ignored
+- Text: contains, does not contain, equals, does not equal, starts with, ends with, matches regex (case-insensitive; an invalid pattern is flagged and ignored), is empty, is not empty; columns with at most 200 distinct values (brand, type, frequency, source and similar) also get a searchable multi-select of values with counts
+- Numbers and percents: `=`, `!=`, `>`, `>=`, `<`, `<=`, between, is empty, is not empty; numbers accept `1,234.5` and the suffixes k, m, b, t (`1.5b`)
+- Dates and datetimes: on, before, after, on or before, on or after, between, in the last N days (presets 7d, 30d, 90d, 1y), older than N days, is empty, is not empty; a date compares by day and a value with a time by the minute (or second). Date columns are UTC calendar dates. Times (`HH:mm[:ss]`, 12-hour input accepted) use at, before, after, at or before, at or after, between
+- Several conditions per column combine with all (AND) or any (OR), up to 5, and with the picked values by AND
+- Empty values never match a comparison, including `!=`; only `is empty` matches them
+- Percent columns hold percent numbers: type `12.5` or `12.5%` (both mean 12.5%); a fraction such as `0.125` is not converted to 12.5%. Values are compared at full precision, not as displayed with two decimals
+- Performance: filters compile once per change into closures over the typed arrays (dictionary columns are evaluated once per distinct value), so no per-row allocation happens
+
 ### Metrics and caveats
 
 Returns come from different sources and different dates: an issuer's official NAV table, a month-end or quarter-end series, or an estimate derived from Yahoo Finance prices. Compare funds with the source badge and the Return As Of column in view, and use the stale toggle to drop old figures. Unavailable data is never published as zero: it is a dash in the table and sorts last.

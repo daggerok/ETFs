@@ -280,6 +280,86 @@
     .dark .src-estimate{background:rgba(245,158,11,.15);color:#fcd34d;border-color:rgba(245,158,11,.35)}
     .dark .src-none{background:rgba(100,116,139,.2);color:#94a3b8;border-color:rgba(100,116,139,.4)}
     .stale-cell{opacity:.55}
+
+    /* Column filters: funnel button in every header, popover (reuses .dd-panel), chips row above the table */
+    .cf-btn{flex:none;display:inline-flex;align-items:center;justify-content:center;width:1.25rem;height:1.25rem;border-radius:.375rem;border:1px solid transparent;color:#94a3b8;background:transparent;cursor:pointer;transition:background-color .12s,color .12s,border-color .12s}
+    .cf-btn:hover{background:#e2e8f0;color:#334155}
+    .cf-btn:focus-visible{outline:none;border-color:#3b82f6;box-shadow:0 0 0 3px rgba(59,130,246,.2)}
+    .cf-btn.is-active{background:#dbeafe;color:#1d4ed8;border-color:#bfdbfe}
+    .dark .cf-btn:hover{background:#334155;color:#e2e8f0}
+    .dark .cf-btn.is-active{background:rgba(59,130,246,.25);color:#93c5fd;border-color:rgba(59,130,246,.45)}
+    #filter-bar[hidden]{display:none}
+    .cf-chip{display:inline-flex;align-items:center;gap:.375rem;max-width:100%;padding:.2rem .3rem .2rem .6rem;border-radius:9999px;border:1px solid #bfdbfe;background:#eff6ff;color:#1d4ed8;cursor:pointer;line-height:1.25}
+    .cf-chip:hover{background:#dbeafe}
+    .cf-chip:focus-visible{outline:none;box-shadow:0 0 0 3px rgba(59,130,246,.3)}
+    .cf-chip-label{font-weight:700;white-space:nowrap}
+    .cf-chip-text{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:22rem;color:#1e40af}
+    .cf-chip-x{flex:none;width:1.125rem;height:1.125rem;border-radius:9999px;display:inline-flex;align-items:center;justify-content:center;font-size:.65rem;line-height:1;color:#3b82f6}
+    .cf-chip-x:hover{background:#bfdbfe;color:#1e3a8a}
+    .cf-count{margin-left:auto;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-weight:600;color:#475569;white-space:nowrap}
+    .dark .cf-chip{border-color:rgba(59,130,246,.45);background:rgba(30,64,175,.22);color:#93c5fd}
+    .dark .cf-chip:hover{background:rgba(30,64,175,.34)}
+    .dark .cf-chip-text{color:#bfdbfe}
+    .dark .cf-chip-x{color:#60a5fa}
+    .dark .cf-chip-x:hover{background:rgba(59,130,246,.3);color:#fff}
+    .dark .cf-count{color:#cbd5e1}
+    .cf-panel{width:23rem}
+    .cf-head{position:relative;flex:none;display:flex;align-items:center;gap:.5rem;padding:.7rem .75rem .35rem}
+    .cf-title{min-width:0;flex:1 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:.9375rem;font-weight:700;color:#0f172a}
+    .dark .cf-title{color:#f8fafc}
+    .cf-type{flex:none;font-size:.65rem;line-height:1;font-weight:700;letter-spacing:.03em;text-transform:uppercase;padding:.25rem .45rem;border-radius:9999px;border:1px solid #e2e8f0;background:#f1f5f9;color:#475569}
+    .cf-type-number,.cf-type-percent{background:#eff6ff;color:#1d4ed8;border-color:#bfdbfe}
+    .cf-type-date,.cf-type-datetime,.cf-type-time{background:#ecfdf5;color:#047857;border-color:#a7f3d0}
+    .dark .cf-type{background:#1e293b;border-color:#334155;color:#cbd5e1}
+    .dark .cf-type-number,.dark .cf-type-percent{background:rgba(30,64,175,.22);color:#93c5fd;border-color:rgba(59,130,246,.4)}
+    .dark .cf-type-date,.dark .cf-type-datetime,.dark .cf-type-time{background:rgba(16,185,129,.15);color:#6ee7b7;border-color:rgba(16,185,129,.35)}
+    .cf-x{flex:none;width:1.75rem;height:1.75rem;display:inline-flex;align-items:center;justify-content:center;border-radius:9999px;color:#64748b;font-size:.85rem;line-height:1}
+    .cf-x:hover{background:#f1f5f9;color:#0f172a}
+    .dark .cf-x:hover{background:#1e293b;color:#f1f5f9}
+    .cf-body{flex:1 1 auto;min-height:0;overflow-y:auto;overscroll-behavior:contain}
+    .cf-sec{padding:.25rem .625rem .625rem}
+    .cf-sec + .cf-sec{border-top:1px solid #f1f5f9}
+    .dark .cf-sec + .cf-sec{border-top-color:#1e293b}
+    .cf-sec-title{display:flex;align-items:center;justify-content:space-between;gap:.5rem;padding:.25rem .125rem;font-size:.7rem;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#64748b}
+    .cf-sec-title[hidden],.cf-join[hidden]{display:none}
+    .cf-join{display:inline-flex;align-items:center;gap:.25rem;text-transform:none;letter-spacing:0;font-weight:500}
+    .cf-vsearch{padding:.25rem 0}
+    .cf-vsearch svg{left:.75rem}
+    .cf-sec .dd-actions{padding:.25rem 0;align-items:center}
+    .cf-sec .dd-actions .dd-count{flex:1 1 auto;text-align:right}
+    .cf-panel .dd-list{max-height:11rem;padding:.25rem;border:1px solid #f1f5f9;border-radius:.5rem}
+    .dark .cf-panel .dd-list{border-color:#1e293b}
+    .cf-cond{display:flex;flex-direction:column;gap:.375rem;padding:.5rem;margin-bottom:.5rem;border:1px solid #e2e8f0;border-radius:.625rem;background:#f8fafc}
+    .dark .cf-cond{border-color:#334155;background:rgba(2,6,23,.5)}
+    .cf-row{display:flex;align-items:center;gap:.375rem}
+    .cf-row .cf-in,.cf-row .cf-sel{flex:1 1 0;min-width:0;padding:.4rem .6rem}
+    .cf-sel{appearance:auto}
+    .cf-and{flex:none;font-size:.75rem;color:#64748b}
+    .cf-del{flex:none;width:1.75rem;height:1.75rem;display:inline-flex;align-items:center;justify-content:center;border-radius:.5rem;color:#94a3b8;font-size:.8rem;line-height:1}
+    .cf-del:hover{background:#ffe4e6;color:#e11d48}
+    .dark .cf-del:hover{background:rgba(244,63,94,.2);color:#fda4af}
+    .cf-in.cf-bad{border-color:#f43f5e;box-shadow:0 0 0 3px rgba(244,63,94,.15)}
+    .cf-err{font-size:.7rem;color:#e11d48}
+    .cf-err[hidden]{display:none}
+    .dark .cf-err{color:#fda4af}
+    .cf-presets{display:flex;gap:.375rem}
+    .cf-add[hidden]{display:none}
+    .cf-hint{margin:.5rem .125rem 0;font-size:.7rem;line-height:1.4;color:#94a3b8}
+    .cf-foot{flex:none;display:flex;align-items:center;gap:.5rem;padding:.5rem .625rem;border-top:1px solid #e2e8f0;background:inherit}
+    .dark .cf-foot{border-top-color:#1e293b}
+    .cf-foot .dd-act:disabled{opacity:.45;cursor:default}
+    .cf-foot-count{flex:1 1 auto;min-width:0;text-align:center;font-size:.75rem;color:#64748b;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .dark .cf-foot-count{color:#94a3b8}
+    .cf-done{flex:none;font-size:.8125rem;font-weight:600;padding:.35rem .9rem;border-radius:.5rem;background:#2563eb;color:#fff;transition:background-color .12s}
+    .cf-done:hover{background:#3b82f6}
+    .cf-done:focus-visible{outline:none;box-shadow:0 0 0 3px rgba(59,130,246,.35)}
+    @media (max-width:639px){
+      .cf-panel{width:auto}
+      .cf-head{padding:1.1rem .75rem .35rem}
+      .cf-cond .cf-in,.cf-cond .cf-sel{font-size:1rem;min-height:2.5rem}
+      .cf-x{width:2rem;height:2rem}
+      .cf-panel .dd-list{max-height:12rem}
+    }
   </style>
 <style id="catalog-summary-styles">
     #app-subtitle:empty { display: none; }
@@ -393,6 +473,7 @@
       </nav>
 
       <div class="bg-white dark:bg-slate-800/50 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm backdrop-blur overflow-hidden">
+        <div id="filter-bar" hidden class="flex flex-wrap items-center gap-1.5 px-4 py-2.5 border-b border-slate-200 dark:border-slate-700 bg-slate-50/70 dark:bg-slate-900/40 text-xs" aria-label="Active column filters"></div>
         <div id="table-scroll" class="overflow-x-auto overflow-y-auto themed-scroll">
           <table class="w-full text-left whitespace-nowrap">
             <thead id="table-head" class="bg-slate-50 dark:bg-slate-900/95 text-slate-500 dark:text-slate-400 text-xs uppercase tracking-wider border-b border-slate-200 dark:border-slate-700 sticky top-0 z-20 backdrop-blur">
