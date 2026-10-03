@@ -65,7 +65,7 @@ ${envBlock}
             import { resolveControls } from "./scripts/update-data.ts";
             import { appendFile } from "node:fs/promises";
             // schedule runs have no dispatch inputs: file defaults apply as-is
-            const inputs = JSON.parse(process.env.DISPATCH_INPUTS || "{}");
+            const inputs = JSON.parse(process.env.DISPATCH_INPUTS || "{}") || {};
             const advanced = JSON.parse(inputs.advanced || "{}");
             const individual = Object.fromEntries(Object.entries(inputs)
               .filter(([key]) => key !== "advanced")
