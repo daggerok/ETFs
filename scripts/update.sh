@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Update the sibling ETF repos cloned in the hub folder (the parent of scripts/):
 # fetch with prune and tags, switch to main (or master) and fast-forward it.
-# Repos are updated in parallel; each repo's output is printed as one block.
+# Output streams live with one job; with several jobs each repo's block is printed as soon as it finishes.
 
 set -uo pipefail
 cd "$(dirname "$0")/.." || exit 1
@@ -71,43 +71,52 @@ else
 fi
 
 OUT="$(mktemp -d)"; trap 'rm -rf "$OUT"' EXIT
-export OUT
+export OUT JOBS
 
-update_one() {
+run_repo() {
   repo="$1"
+  echo "========================================"
+  echo "Processing repository: $repo"
+  echo "========================================"
   (
-    echo "========================================"
-    echo "Processing repository: $repo"
-    echo "========================================"
-    (
-      cd "$repo" || exit 1
-      echo "Fetching with prune and tags..."
-      git fetch -pat || exit 1
-      target=""
-      if git show-ref --verify --quiet refs/heads/main || git show-ref --verify --quiet refs/remotes/origin/main; then target="main"
-      elif git show-ref --verify --quiet refs/heads/master || git show-ref --verify --quiet refs/remotes/origin/master; then target="master"; fi
-      if [ -z "$target" ]; then echo "Warning: neither main nor master found, skipping."; exit 0; fi
-      echo "Checking out $target..."
-      git checkout "$target" || exit 1
-      echo "Fast-forwarding $target..."
-      git merge --ff-only "origin/$target" || git pull origin "$target"
-    )
-    code=$?
-    if [ $code -eq 0 ]; then echo "OK: $repo"; else echo "FAILED: $repo (exit $code)"; fi
-    echo
-    exit $code
-  ) > "$OUT/$repo.log" 2>&1
+    cd "$repo" || exit 1
+    echo "Fetching with prune and tags..."
+    git fetch -pat || exit 1
+    target=""
+    if git show-ref --verify --quiet refs/heads/main || git show-ref --verify --quiet refs/remotes/origin/main; then target="main"
+    elif git show-ref --verify --quiet refs/heads/master || git show-ref --verify --quiet refs/remotes/origin/master; then target="master"; fi
+    if [ -z "$target" ]; then echo "Warning: neither main nor master found, skipping."; exit 0; fi
+    echo "Checking out $target..."
+    git checkout "$target" || exit 1
+    echo "Fast-forwarding $target..."
+    git merge --ff-only "origin/$target" || git pull origin "$target"
+  )
   code=$?
-  cat "$OUT/$repo.log"
+  if [ $code -eq 0 ]; then echo "OK: $repo"; else echo "FAILED: $repo (exit $code)"; fi
+  echo
   return $code
 }
-export -f update_one
+
+# one job: stream git output live; several jobs: print each repo's block as soon as it finishes
+update_one() {
+  repo="$1"
+  if [ "$JOBS" -eq 1 ]; then
+    run_repo "$repo" 2>&1 | tee "$OUT/$repo.log"
+    code=${PIPESTATUS[0]}
+  else
+    run_repo "$repo" > "$OUT/$repo.log" 2>&1
+    code=$?
+    cat "$OUT/$repo.log"
+  fi
+  echo "$code" > "$OUT/$repo.code"
+  return $code
+}
+export -f run_repo update_one
 
 echo "Updating ${#LIST[@]} repo(s) with $JOBS parallel job(s) ..."
-printf '%s\n' "${LIST[@]}" | xargs -P "$JOBS" -I{} bash -c 'update_one {}' > "$OUT/all.log"
-cat "$OUT/all.log"
+printf '%s\n' "${LIST[@]}" | xargs -P "$JOBS" -I{} bash -c 'update_one {}'
 
-failed=$(grep -c '^FAILED: ' "$OUT/all.log")
-ok=$(grep -c '^OK: ' "$OUT/all.log")
+failed=$(grep -L '^0$' "$OUT"/*.code 2>/dev/null | wc -l | tr -d ' ')
+ok=$(grep -l '^0$' "$OUT"/*.code 2>/dev/null | wc -l | tr -d ' ')
 echo "Done: $ok updated, $failed failed."
 [ "$failed" -eq 0 ] || exit 1
