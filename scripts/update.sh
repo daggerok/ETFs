@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Update the sibling ETF repos cloned in the hub folder (the parent of scripts/):
-# fetch with prune and tags, switch to main (or master) whatever branch the repo is on, and pull it fast-forward only.
+# fetch with prune and tags, switch to main (or master) whatever branch the repo is on (the current feature branch is left;
+# commit or stash first, a dirty tree that conflicts makes the checkout fail), and pull it fast-forward only.
 # Output streams live with one job; with several jobs each repo's block is printed as soon as it finishes.
 
 set -uo pipefail
