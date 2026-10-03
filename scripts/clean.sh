@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Remove the sibling ETF repos cloned in the hub folder (the parent of scripts/).
-# A repo with uncommitted changes, unpushed commits or stash entries is NEVER removed: it is
-# skipped with a message (commit/push it, or delete it by hand). Untracked .idea/ does not count.
+# A repo with uncommitted changes, ignored files, unpushed commits, a detached-HEAD commit or stash entries
+# is NEVER removed, and neither is a repo on which git itself errors: it is kept with a message (commit/push it,
+# or delete it by hand). Untracked .idea/ and node_modules/ do not count.
 # Only the known ETF repos are touched; the hub files themselves are never removed.
 
 set -uo pipefail
@@ -68,6 +69,7 @@ if [ ${#SELECTED[@]} -gt 0 ]; then
       [ "$(printf '%s' "$repo" | tr '[:upper:]' '[:lower:]')" = "$lower" ] && match="$repo" && break
     done
     [ -n "$match" ] || die "unknown repo: $want (known: ${REPOS[*]})"
+    case " ${LIST[*]-} " in *" $match "*) continue ;; esac # a repo listed twice is removed once
     LIST+=("$match")
   done
 else
@@ -78,10 +80,18 @@ fi
 clean_one() {
   repo="$1"
   if [ ! -d "$repo/.git" ] || [ -L "$repo" ]; then echo "skip    $repo (not cloned)"; return 0; fi
+  # fail closed: when git itself errors (corrupt repo, dubious ownership, ...), nothing is deleted
+  if ! status="$(git -C "$repo" status --porcelain --ignored 2>&1)"; then echo "KEPT    $repo (git status failed: $(printf '%s' "$status" | head -1)): inspect it by hand"; return 1; fi
+  if ! unpushed="$(git -C "$repo" log --branches --not --remotes --oneline 2>&1)"; then echo "KEPT    $repo (git log failed): inspect it by hand"; return 1; fi
+  if ! stash="$(git -C "$repo" stash list 2>&1)"; then echo "KEPT    $repo (git stash failed): inspect it by hand"; return 1; fi
+  detached=""
+  if [ -z "$(git -C "$repo" branch --show-current 2>/dev/null)" ]; then detached="$(git -C "$repo" log -1 --not --branches --remotes --oneline HEAD 2>/dev/null | head -1)"; fi
   reasons=""
-  [ -n "$(git -C "$repo" status --porcelain 2>/dev/null | grep -v '^?? \.idea/$')" ] && reasons="uncommitted changes"
-  [ -n "$(git -C "$repo" log --branches --not --remotes --oneline 2>/dev/null | head -1)" ] && reasons="${reasons:+$reasons, }unpushed commits"
-  [ -n "$(git -C "$repo" stash list 2>/dev/null | head -1)" ] && reasons="${reasons:+$reasons, }stash entries"
+  # untracked/ignored .idea/ and node_modules/ are the owner's tooling folders and do not count; any other change or ignored file does
+  [ -n "$(printf '%s\n' "$status" | grep -v -e '^$' -e '^?? \.idea/$' -e '^!! \.idea/$' -e '^!! node_modules/$')" ] && reasons="uncommitted or ignored files"
+  [ -n "$unpushed" ] && reasons="${reasons:+$reasons, }unpushed commits"
+  [ -n "$detached" ] && reasons="${reasons:+$reasons, }detached HEAD commit"
+  [ -n "$stash" ] && reasons="${reasons:+$reasons, }stash entries"
   if [ -n "$reasons" ]; then echo "KEPT    $repo ($reasons): commit/push it first, or remove it by hand with: rm -rf $repo"; return 1; fi
   if rm -rf "$repo"; then echo "removed $repo"; else echo "FAILED  $repo (could not remove)"; return 1; fi
 }

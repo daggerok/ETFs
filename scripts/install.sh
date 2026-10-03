@@ -77,6 +77,7 @@ if [ ${#SELECTED[@]} -gt 0 ]; then
       [ "$(printf '%s' "$repo" | tr '[:upper:]' '[:lower:]')" = "$lower" ] && match="$repo" && break
     done
     [ -n "$match" ] || die "unknown repo: $want (available: ${REPOS[*]})"
+    case " ${LIST[*]-} " in *" $match "*) continue ;; esac # a repo listed twice is cloned once (parallel clones of one folder would race)
     LIST+=("$match")
   done
 else
@@ -104,7 +105,7 @@ clone_one() {
   if [ -d "$repo/.git" ]; then echo "skip    $repo (already cloned)"; return 0; fi
   if [ -e "$repo" ]; then echo "FAILED  $repo (a non-git path with this name exists)"; return 1; fi
   # shellcheck disable=SC2086
-  if git clone -q $DEPTH_FLAG "$PREFIX$repo.git" "$repo" 2>/dev/null; then echo "cloned  $repo"; else rm -rf "$repo"; echo "FAILED  $repo ($PREFIX$repo.git)"; return 1; fi
+  if err="$(git clone -q $DEPTH_FLAG "$PREFIX$repo.git" "$repo" 2>&1)"; then echo "cloned  $repo"; else rm -rf "$repo"; echo "FAILED  $repo ($PREFIX$repo.git): $(printf '%s' "$err" | tr '\n' ' ' | cut -c1-200)"; return 1; fi
 }
 export -f clone_one
 export PREFIX DEPTH_FLAG
