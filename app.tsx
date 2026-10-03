@@ -209,6 +209,7 @@ const el = {
   staleDays: byId('stale-days'),
   loadProgress: byId('load-progress'),
   tableHead: byId('table-head'),
+  filterBar: byId('filter-bar'),
   tableBody: byId('table-body'),
   tableScroll: byId('table-scroll'),
   staticLoadSentinel: byId('static-load-sentinel'),
@@ -1236,6 +1237,9 @@ function filterCatalogIds(): number[] {
   const terms = parseSearchTerms(catalogQuery());
   const catAllowed = state.hiddenCategories.size ? Uint8Array.from(s.categories, (name: string) => (state.hiddenCategories.has(name) ? 0 : 1)) : null;
   const staleCut = Date.now() - state.staleDays * DAY_MS;
+  const colPreds = catalogColumnPredicates();
+  const colCount = colPreds.length;
+  let before = 0;
   const out: number[] = [];
   for (let i = 0; i < s.n; i++) {
     if (!allowed[s.brandIdx[i]]) continue;
@@ -1250,8 +1254,14 @@ function filterCatalogIds(): number[] {
       }
       if (!ok) continue;
     }
+    before += 1;
+    let colOk = true;
+    for (let k = 0; k < colCount; k++) if (!colPreds[k](i)) { colOk = false; break; }
+    if (!colOk) continue;
     out.push(i);
   }
+  if (colCount) colStats.All = { before, after: out.length };
+  else delete colStats.All;
   return out;
 }
 
@@ -1302,7 +1312,7 @@ function catalogIds(): number[] {
   const sig = [
     store.version, hiddenBrandsSig(), blacklistVersion, hiddenCategoriesSig(), catalogQuery(),
     state.hideStale ? state.staleDays : 'off', state.sortKey, state.sortDir,
-    state.hideStale ? Math.floor(Date.now() / DAY_MS) : '',
+    state.hideStale ? Math.floor(Date.now() / DAY_MS) : '', colFilterSig('All'),
   ].join('|');
   if (viewCache && viewCache.sig === sig) return viewCache.ids;
   const ids = sortIds(filterCatalogIds(), state.sortKey, state.sortDir);
@@ -2068,6 +2078,1237 @@ function initSearchSuggest(): void {
 
 
 // =========================================================================
+// 6b. Column filters: type detection, filter engine, header popover, chips
+// =========================================================================
+
+/**
+ * Every column header of All ETFs, Watchlist and the Holdings / History /
+ * Distributions tabs has a funnel button that opens a type-aware filter
+ * popover. A column is a `ColData`: numbers, percents, dates, datetimes and
+ * times live in a Float64Array (NaN = empty), strings are plain text or a small
+ * integer dictionary. A filter is compiled once per change into a closure over
+ * those arrays, so applying it allocates nothing per row. Columns combine with
+ * AND; the conditions of one column combine with AND or OR (user's choice) and
+ * with the column's multi-select values via AND. NaN / empty never matches a
+ * comparison, only "is empty".
+ *
+ * Type detection (adapted from daggerok/csv): typed catalog columns take their
+ * type from column metadata (number, percent, date) refined by the values (a
+ * date column holding times becomes datetime); text columns (detail sheets) are
+ * detected from up to TYPE_SAMPLE_SIZE non-empty values and a column needs
+ * TYPE_MATCH_RATIO of them to match a type, otherwise it stays a string.
+ */
+
+type ColType = 'string' | 'number' | 'percent' | 'date' | 'datetime' | 'time';
+type FilterCond = { op: string; a: string; b: string };
+type ColFilter = { join: 'and' | 'or'; conds: FilterCond[]; picks: string[] };
+type ColData = {
+  key: string;
+  label: string;
+  type: ColType;
+  n: number;
+  num: Float64Array | null; // number / percent / date / datetime (UTC ms) / time (seconds); NaN = empty
+  ids: Uint8Array | Uint16Array | null; // dictionary-encoded strings
+  dict: string[] | null;
+  text: string[] | null;
+  lower: string[] | null; // lazily lower-cased `text`
+  distinct: any; // lazily computed: Array<{ value, label, count }> | null (too many values)
+  distinctDone: boolean;
+};
+type ColStat = { before: number; after: number };
+
+const COL_FILTERS_KEY = 'etf-hub-column-filters';
+const TYPE_SAMPLE_SIZE = 400;
+const TYPE_MATCH_RATIO = 0.8;
+const MULTI_MAX_DISTINCT = 200; // multi-select of values only for low-cardinality string columns
+const MAX_CONDS = 5;
+const COL_TYPE_LABELS: Record<ColType, string> = { string: 'text', number: 'number', percent: 'percent', date: 'date', datetime: 'datetime', time: 'time' };
+
+const STRING_OPS: Array<[string, string]> = [
+  ['contains', 'contains'], ['not_contains', 'does not contain'], ['equals', 'equals'], ['not_equals', 'does not equal'],
+  ['starts', 'starts with'], ['ends', 'ends with'], ['regex', 'matches regex'], ['empty', 'is empty'], ['notempty', 'is not empty'],
+];
+const NUMBER_OPS: Array<[string, string]> = [
+  ['eq', '='], ['ne', '!='], ['gt', '>'], ['ge', '>='], ['lt', '<'], ['le', '<='], ['between', 'between'], ['empty', 'is empty'], ['notempty', 'is not empty'],
+];
+const DATE_OPS: Array<[string, string]> = [
+  ['on', 'on'], ['before', 'before'], ['after', 'after'], ['onorbefore', 'on or before'], ['onorafter', 'on or after'], ['between', 'between'],
+  ['last', 'in the last N days'], ['older', 'older than N days'], ['empty', 'is empty'], ['notempty', 'is not empty'],
+];
+const TIME_OPS: Array<[string, string]> = [
+  ['on', 'at'], ['before', 'before'], ['after', 'after'], ['onorbefore', 'at or before'], ['onorafter', 'at or after'], ['between', 'between'], ['empty', 'is empty'], ['notempty', 'is not empty'],
+];
+const ALL_OPS = new Set([...STRING_OPS, ...NUMBER_OPS, ...DATE_OPS, ...TIME_OPS].map(pair => pair[0]));
+const OP_CHIP_TEXT: Record<string, string> = Object.fromEntries([...STRING_OPS, ...NUMBER_OPS, ...DATE_OPS, ...TIME_OPS]);
+
+function opsFor(type: ColType): Array<[string, string]> {
+  if (type === 'string') return STRING_OPS;
+  if (type === 'number' || type === 'percent') return NUMBER_OPS;
+  if (type === 'time') return TIME_OPS;
+  return DATE_OPS;
+}
+
+function defaultOp(type: ColType): string {
+  return type === 'string' ? 'contains' : type === 'number' || type === 'percent' ? 'gt' : 'after';
+}
+
+function opInputs(op: string): number {
+  return op === 'empty' || op === 'notempty' ? 0 : op === 'between' ? 2 : 1;
+}
+
+// ---- parsing ------------------------------------------------------------
+
+const MONTH_NAMES = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+const NUM_TEXT_RE = /^([+-]?)\$?([+-]?)(\d[\d,]*\.?\d*|\.\d+)(e[+-]?\d+)?([kmbt%]?)$/i;
+const SUFFIX_MULT: Record<string, number> = { k: 1e3, m: 1e6, b: 1e9, t: 1e12 };
+const ISO_RE = /^(\d{4})-(\d{1,2})-(\d{1,2})(?:[T\s]+(\d{1,2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?\s*(Z|[+-]\d{2}:?\d{2})?)?$/i;
+const US_RE = /^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?\s*([AP]M)?)?$/i;
+const YMD_SLASH_RE = /^(\d{4})\/(\d{1,2})\/(\d{1,2})$/;
+const DMON_RE = /^(\d{1,2})[\s-]+([A-Za-z]{3,9})\.?[\s,-]+(\d{4})$/;
+const MOND_RE = /^([A-Za-z]{3,9})\.?\s+(\d{1,2}),?\s+(\d{4})$/;
+const TIME_RE = /^(\d{1,2}):(\d{2})(?::(\d{2}))?\s*([AP]M)?$/i;
+let tpTime = false; // side channel of parseTemporalTs: the text had a time part
+let tpSecs = false; // ... and seconds
+
+function isBlankText(text: string): boolean {
+  const t = text.trim();
+  return t === '' || t === DASH || t === '—' || t === '-' || t === '--';
+}
+
+function isPlaceholderText(text: string): boolean {
+  const t = text.trim().toLowerCase();
+  return t === '' || t === DASH || t === '—' || t === '-' || t === '--' || t === 'n/a' || t === 'na' || t === 'null' || t === 'nan';
+}
+
+/** "1,234.5", "$12", "(5)", "1.5b" (suffixes only when allowed), "12.5%" (only when allowed) -> number, NaN when invalid. */
+function parseNumberText(raw: string, allowSuffix: boolean, allowPct: boolean): number {
+  let s = raw.replace(/\s+/g, '');
+  if (!s) return NaN;
+  let neg = false;
+  if (s[0] === '(' && s[s.length - 1] === ')') { neg = true; s = s.slice(1, -1); }
+  const m = NUM_TEXT_RE.exec(s);
+  if (!m) return NaN;
+  const suffix = m[5].toLowerCase();
+  if (suffix === '%' ? !allowPct : (suffix !== '' && !allowSuffix)) return NaN;
+  let v = parseFloat(m[3].replace(/,/g, '') + (m[4] || ''));
+  if (v !== v) return NaN;
+  if (suffix && suffix !== '%') v *= SUFFIX_MULT[suffix];
+  if (m[1] === '-' || m[2] === '-') neg = !neg;
+  return neg ? -v : v;
+}
+
+function utcMs(y: number, mo: number, d: number, h: number, mi: number, s: number): number {
+  if (mo < 1 || mo > 12 || d < 1 || d > 31 || h > 23 || mi > 59 || s > 59) return NaN;
+  const ts = Date.UTC(y, mo - 1, d, h, mi, s);
+  const check = new Date(ts);
+  return check.getUTCMonth() === mo - 1 && check.getUTCDate() === d ? ts : NaN;
+}
+
+function monthIndex(name: string): number {
+  return MONTH_NAMES.indexOf(name.slice(0, 3).toLowerCase()) + 1;
+}
+
+function hour12(h: number, ap: string | undefined): number {
+  if (!ap) return h;
+  const pm = ap.toLowerCase() === 'pm';
+  return (h % 12) + (pm ? 12 : 0);
+}
+
+/**
+ * Dates and datetimes -> UTC milliseconds (wall clock, timezone independent unless an offset is given).
+ * Supported: 2026-08-21, 2026-08-21 14:30[:05], 2026-08-21T14:30Z, 08/21/2026 (US; day first when the first number is > 12),
+ * 2026/08/21, 21-Aug-2026, 21 Aug 2026, Aug 21, 2026.
+ */
+function parseTemporalTs(raw: string): number {
+  tpTime = false;
+  tpSecs = false;
+  const s = raw.trim();
+  if (s.length < 8 || s.length > 40) return NaN;
+  let m = ISO_RE.exec(s);
+  if (m) {
+    const h = m[4] !== undefined ? Number(m[4]) : 0;
+    const mi = m[5] !== undefined ? Number(m[5]) : 0;
+    const sec = m[6] !== undefined ? Number(m[6]) : 0;
+    let ts = utcMs(Number(m[1]), Number(m[2]), Number(m[3]), h, mi, sec);
+    if (ts !== ts) return NaN;
+    tpTime = m[4] !== undefined;
+    tpSecs = m[6] !== undefined;
+    if (m[7] && m[7].toUpperCase() !== 'Z') {
+      const sign = m[7][0] === '-' ? -1 : 1;
+      const digits = m[7].slice(1).replace(':', '');
+      ts -= sign * (Number(digits.slice(0, 2)) * 60 + Number(digits.slice(2))) * 60000;
+    }
+    return ts;
+  }
+  m = US_RE.exec(s);
+  if (m) {
+    let month = Number(m[1]);
+    let day = Number(m[2]);
+    if (month > 12 && day <= 12) { const t = month; month = day; day = t; }
+    const h = m[4] !== undefined ? hour12(Number(m[4]), m[7]) : 0;
+    const ts = utcMs(Number(m[3]), month, day, h, m[5] !== undefined ? Number(m[5]) : 0, m[6] !== undefined ? Number(m[6]) : 0);
+    tpTime = m[4] !== undefined;
+    tpSecs = m[6] !== undefined;
+    return ts;
+  }
+  m = YMD_SLASH_RE.exec(s);
+  if (m) return utcMs(Number(m[1]), Number(m[2]), Number(m[3]), 0, 0, 0);
+  m = DMON_RE.exec(s);
+  if (m) { const mo = monthIndex(m[2]); return mo ? utcMs(Number(m[3]), mo, Number(m[1]), 0, 0, 0) : NaN; }
+  m = MOND_RE.exec(s);
+  if (m) { const mo = monthIndex(m[1]); return mo ? utcMs(Number(m[3]), mo, Number(m[2]), 0, 0, 0) : NaN; }
+  return NaN;
+}
+
+/** "14:30", "14:30:05", "2:30 PM" -> seconds since midnight, NaN when invalid. */
+function parseTimeText(raw: string): number {
+  tpSecs = false;
+  const m = TIME_RE.exec(raw.trim());
+  if (!m) return NaN;
+  const h = hour12(Number(m[1]), m[4]);
+  const mi = Number(m[2]);
+  const s = m[3] !== undefined ? Number(m[3]) : 0;
+  if (h > 23 || mi > 59 || s > 59 || (m[4] && Number(m[1]) > 12)) return NaN;
+  tpSecs = m[3] !== undefined;
+  return h * 3600 + mi * 60 + s;
+}
+
+/** Text of an input of a filter condition -> number (percent numbers stay percent numbers: 12.5 and 12.5% both mean 12.5). */
+function parseNumberInput(text: string, type: ColType): number {
+  return parseNumberText(text, type === 'number', type === 'percent');
+}
+
+function parseTemporalInput(text: string, type: ColType): { v: number; unit: number } | null {
+  const s = text.trim();
+  if (!s) return null;
+  if (type === 'time') {
+    const t = parseTimeText(s);
+    return t === t ? { v: t, unit: tpSecs ? 1 : 60 } : null;
+  }
+  const ts = parseTemporalTs(s);
+  if (ts !== ts) return null;
+  return { v: ts, unit: !tpTime ? DAY_MS : tpSecs ? 1000 : 60000 };
+}
+
+// ---- type detection -------------------------------------------------------
+
+type CellKind = 'datetime' | 'date' | 'time' | 'percent' | 'number' | 'string';
+
+function classifyCell(text: string): CellKind {
+  const s = text.trim();
+  const ts = parseTemporalTs(s);
+  if (ts === ts) return tpTime ? 'datetime' : 'date';
+  const t = parseTimeText(s);
+  if (t === t) return 'time';
+  if (/%\s*$/.test(s)) {
+    const p = parseNumberText(s, false, true);
+    return p === p ? 'percent' : 'string';
+  }
+  const v = parseNumberText(s, true, false);
+  if (v !== v) return 'string';
+  if (/^[+-]?0\d/.test(s)) return 'string'; // leading zeros: an identifier, not a quantity
+  return 'number';
+}
+
+/** Detects the type of a text column from its values (see the block comment). */
+function detectTextType(texts: string[], header: string): ColType {
+  const stride = Math.max(1, Math.floor(texts.length / TYPE_SAMPLE_SIZE));
+  const counts: Record<string, number> = { datetime: 0, date: 0, time: 0, percent: 0, number: 0, string: 0 };
+  let total = 0;
+  let digitsLen = -1; // common length of the all-digit samples (-1 none yet, 0 mixed lengths)
+  let digitsOnly = 0;
+  for (let i = 0; i < texts.length && total < TYPE_SAMPLE_SIZE; i += stride) {
+    if (isPlaceholderText(texts[i])) continue;
+    const kind = classifyCell(texts[i]);
+    counts[kind] += 1;
+    total += 1;
+    if (kind === 'number' && /^\d+$/.test(texts[i].trim())) {
+      digitsOnly += 1;
+      const len = texts[i].trim().length;
+      digitsLen = digitsLen === -1 || digitsLen === len ? len : 0;
+    }
+  }
+  if (total === 0) return 'string';
+  const need = total * TYPE_MATCH_RATIO;
+  // Fixed-width all-digit values (CUSIP, SEDOL, account numbers) are identifiers, not quantities.
+  if (digitsOnly === counts.number && digitsLen >= 6 && counts.number >= need && !/shares|volume|assets|amount|value|count|quantity|price|nav|par/i.test(header)) return 'string';
+  if (counts.date + counts.datetime >= need) return counts.datetime > 0 ? 'datetime' : 'date';
+  if (counts.time >= need) return 'time';
+  if (counts.percent + counts.number >= need) {
+    const percentHeader = /%|\b(weight|coupon|yield|premium|discount|return)\b/i.test(header);
+    return percentHeader || (counts.percent > 0 && counts.percent >= counts.number) ? 'percent' : 'number';
+  }
+  return 'string';
+}
+
+function newColData(key: string, label: string, type: ColType, n: number): ColData {
+  return { key, label, type, n, num: null, ids: null, dict: null, text: null, lower: null, distinct: null, distinctDone: false };
+}
+
+function numberCol(key: string, label: string, hint: 'number' | 'percent' | 'date', values: Float64Array): ColData {
+  let type: ColType = hint;
+  if (hint === 'date') {
+    // A date column whose values carry a time of day is a datetime column (checked on the values, not on the hint).
+    for (let i = 0; i < values.length; i++) {
+      const x = values[i];
+      if (x === x && x % DAY_MS !== 0) { type = 'datetime'; break; }
+    }
+  }
+  const col = newColData(key, label, type, values.length);
+  col.num = values;
+  return col;
+}
+
+/** Date column of the catalog parsed from the feed's own text (UTC calendar date, so filters are timezone independent). */
+function catalogDateValues(s: Store, key: string): Float64Array {
+  const out = new Float64Array(s.n).fill(NaN);
+  for (let i = 0; i < s.n; i++) {
+    const raw = s.raw[i];
+    const text = key === 'perfTs' ? (raw.metrics ? raw.metrics.performanceAsOf : '') : key === 'inceptionTs' ? raw.inceptionDate : raw.asOfDate;
+    if (typeof text === 'string' && text) out[i] = parseTemporalTs(text);
+  }
+  return out;
+}
+
+function dictCol(key: string, label: string, ids: Uint8Array | Uint16Array, dict: string[]): ColData {
+  const col = newColData(key, label, 'string', ids.length);
+  col.ids = ids;
+  col.dict = dict;
+  return col;
+}
+
+function textCol(key: string, label: string, texts: string[]): ColData {
+  const col = newColData(key, label, 'string', texts.length);
+  col.text = texts;
+  return col;
+}
+
+/** Text column of unknown type (detail sheets): detect the type from the values, then parse every cell once. */
+function detectedCol(key: string, label: string, texts: string[]): ColData {
+  const type = detectTextType(texts, label);
+  if (type === 'string') return textCol(key, label, texts);
+  const values = new Float64Array(texts.length).fill(NaN);
+  for (let i = 0; i < texts.length; i++) {
+    const t = texts[i];
+    if (isPlaceholderText(t)) continue;
+    let v = NaN;
+    if (type === 'number' || type === 'percent') v = parseNumberText(t, true, true);
+    else if (type === 'time') v = parseTimeText(t);
+    else v = parseTemporalTs(t);
+    values[i] = v;
+  }
+  const col = newColData(key, label, type, texts.length);
+  col.num = values;
+  return col;
+}
+
+// ---- column sets of every filterable table ---------------------------------
+
+type CatalogColSpec = { key: string; label: string; kind: 'text' | 'dict' | 'number' | 'percent' | 'date' };
+
+const CATALOG_COLS: CatalogColSpec[] = [
+  { key: 'ticker', label: 'Ticker', kind: 'text' },
+  { key: 'brand', label: 'Brand', kind: 'dict' },
+  { key: 'name', label: 'Fund Name', kind: 'text' },
+  { key: 'category', label: 'Type', kind: 'dict' },
+  { key: 'navValue', label: 'NAV', kind: 'number' },
+  { key: 'aumValue', label: 'Net Assets', kind: 'number' },
+  { key: 'terValue', label: 'Expense', kind: 'percent' },
+  { key: 'dividendYield', label: 'Dividend Yield', kind: 'percent' },
+  { key: 'secYield', label: 'SEC Yield', kind: 'percent' },
+  { key: 'dividendFrequency', label: 'Frequency', kind: 'dict' },
+  { key: 'ytd', label: 'YTD Return', kind: 'percent' },
+  { key: 'tr1y', label: 'TR 1Y', kind: 'percent' },
+  { key: 'tr3y', label: 'TR 3Y', kind: 'percent' },
+  { key: 'tr5y', label: 'TR 5Y', kind: 'percent' },
+  { key: 'tr10y', label: 'TR 10Y', kind: 'percent' },
+  { key: 'cagr3y', label: 'CAGR 3Y', kind: 'percent' },
+  { key: 'cagr5y', label: 'CAGR 5Y', kind: 'percent' },
+  { key: 'cagr10y', label: 'CAGR 10Y', kind: 'percent' },
+  { key: 'siAnn', label: 'SI Ann.', kind: 'percent' },
+  { key: 'basisCls', label: 'Source', kind: 'dict' },
+  { key: 'perfTs', label: 'Return As Of', kind: 'date' },
+  { key: 'inceptionTs', label: 'Inception', kind: 'date' },
+  { key: 'holdings', label: 'Holdings', kind: 'number' },
+  { key: 'history', label: 'History', kind: 'number' },
+  { key: 'asOfTs', label: 'As Of', kind: 'date' },
+];
+
+const WATCHLIST_COLS: Array<{ key: string; label: string; kind: 'text' | 'number' | 'percent' }> = [
+  { key: 'symbol', label: 'Ticker', kind: 'text' },
+  { key: 'name', label: 'Name', kind: 'text' },
+  { key: 'funds', label: 'ETFs', kind: 'text' },
+  { key: 'fundCount', label: '# ETFs', kind: 'number' },
+  { key: 'weightSum', label: 'Weight Sum', kind: 'percent' },
+  { key: 'maxWeight', label: 'Max Weight', kind: 'percent' },
+  { key: 'identifier', label: 'Identifier', kind: 'text' },
+];
+
+/** Builds a dictionary column (id per row + distinct texts) from a text array. */
+function dictFromTexts(key: string, label: string, texts: string[]): ColData {
+  const map = new Map<string, number>();
+  const dict: string[] = [];
+  const ids = new Uint16Array(texts.length);
+  for (let i = 0; i < texts.length; i++) {
+    const t = texts[i];
+    let id = map.get(t);
+    if (id === undefined) { id = dict.length; dict.push(t); map.set(t, id); }
+    ids[i] = id;
+  }
+  return dictCol(key, label, ids, dict);
+}
+
+let catalogColsCache: { version: number; cols: ColData[] } | null = null;
+
+function catalogCols(): ColData[] {
+  if (!store) return [];
+  const s = store;
+  if (catalogColsCache && catalogColsCache.version === s.version) return catalogColsCache.cols;
+  const cols = CATALOG_COLS.map(spec => {
+    const { key, label } = spec;
+    if (key === 'ticker') return textCol(key, label, s.ticker);
+    if (key === 'name') return textCol(key, label, s.name);
+    if (key === 'brand') return dictCol(key, label, s.brandIdx, BRANDS.map(brand => brand.brand));
+    if (key === 'category') return dictCol(key, label, s.catId, s.categories);
+    if (key === 'dividendFrequency') return dictFromTexts(key, label, s.freqText);
+    if (key === 'basisCls') {
+      const ids = new Uint8Array(s.n);
+      for (let i = 0; i < s.n; i++) { const c = s.basisCls[i]; ids[i] = c === 1 ? 0 : c === 2 ? 1 : c === 3 ? 2 : 3; }
+      return dictCol(key, label, ids, [BASIS_BADGES['1'].label, BASIS_BADGES['2'].label, BASIS_BADGES['3'].label, BASIS_BADGES.none.label]);
+    }
+    if (spec.kind === 'date') return numberCol(key, label, 'date', catalogDateValues(s, key));
+    if (spec.kind === 'number' || spec.kind === 'percent') return numberCol(key, label, spec.kind, s.num[key]);
+    return textCol(key, label, []);
+  });
+  catalogColsCache = { version: s.version, cols };
+  return cols;
+}
+
+let watchlistColsCache: { rows: WatchlistRow[]; cols: ColData[] } | null = null;
+
+function watchlistCols(): ColData[] {
+  const rows = getDedupedWatchlistRows();
+  if (watchlistColsCache && watchlistColsCache.rows === rows) return watchlistColsCache.cols;
+  const n = rows.length;
+  const numeric = (field: string): Float64Array => {
+    const out = new Float64Array(n).fill(NaN);
+    for (let i = 0; i < n; i++) { const v = rows[i][field]; if (typeof v === 'number' && Number.isFinite(v)) out[i] = v; }
+    return out;
+  };
+  const cols = WATCHLIST_COLS.map(spec => {
+    if (spec.kind === 'number' || spec.kind === 'percent') return numberCol(spec.key, spec.label, spec.kind, numeric(spec.key));
+    const texts = rows.map(row => (spec.key === 'funds' ? row.funds.map(keyTicker).join(' ') : String(row[spec.key] ?? '')));
+    return textCol(spec.key, spec.label, texts);
+  });
+  watchlistColsCache = { rows, cols };
+  return cols;
+}
+
+/** Headers + rows behind the active Holdings / History / Distributions tab, or null while not loaded. */
+function sheetSource(scope: string): { headers: string[]; rows: string[][] } | null {
+  const fund = getActiveFund();
+  if (!fund) return null;
+  if (scope === 'detail:distributions') {
+    const meta = fundMetaCache.get(fund.key);
+    const worksheet = meta && meta.distributions ? meta.distributions : null;
+    if (!worksheet || !Array.isArray(worksheet.headers) || !Array.isArray(worksheet.rows)) return null;
+    return { headers: worksheet.headers, rows: worksheet.rows };
+  }
+  const entry = sheetState.get(sheetKey(scope === 'detail:history' ? 'history' : 'holdings'));
+  return entry ? { headers: entry.headers, rows: entry.rows } : null;
+}
+
+let sheetColsCache: { rows: string[][]; len: number; sig: string; cols: ColData[] } | null = null;
+
+function sheetCols(headers: string[], rows: string[][]): ColData[] {
+  const sig = headers.join('\u0001');
+  if (sheetColsCache && sheetColsCache.rows === rows && sheetColsCache.len === rows.length && sheetColsCache.sig === sig) return sheetColsCache.cols;
+  const cols = headers.map((header, index) => {
+    const texts = new Array(rows.length);
+    for (let r = 0; r < rows.length; r++) texts[r] = String(rows[r][index] ?? '');
+    return detectedCol(sheetFilterKey(index, header), header || `Col ${index + 1}`, texts);
+  });
+  sheetColsCache = { rows, len: rows.length, sig, cols };
+  return cols;
+}
+
+/** Persistent key of a sheet column: position plus header, so another fund with other headers never inherits it. */
+function sheetFilterKey(index: number, header: string): string {
+  return `c${index}:${header}`;
+}
+
+function filterScope(): string | null {
+  const tab = state.activeTab;
+  return tab === 'All' || tab === 'watchlist' || tab === 'detail:holdings' || tab === 'detail:history' || tab === 'detail:distributions' ? tab : null;
+}
+
+function scopeCols(scope: string): ColData[] {
+  if (scope === 'All') return catalogCols();
+  if (scope === 'watchlist') return watchlistCols();
+  const source = sheetSource(scope);
+  return source ? sheetCols(source.headers, source.rows) : [];
+}
+
+function scopeNoun(scope: string): string {
+  return scope === 'All' ? 'ETFs' : scope === 'watchlist' ? 'tickers' : 'rows';
+}
+
+// ---- filter state --------------------------------------------------------
+
+let colFilters: Record<string, Record<string, ColFilter>> = {};
+const colStats: Record<string, ColStat> = {};
+
+function colFilterSig(scope: string): string {
+  const map = colFilters[scope];
+  return map ? JSON.stringify(map) : '';
+}
+
+function persistColFilters(): void {
+  if (Object.keys(colFilters).length) lsSet(COL_FILTERS_KEY, JSON.stringify(colFilters));
+  else lsRemove(COL_FILTERS_KEY);
+}
+
+function restoreColFilters(): void {
+  const saved = lsGetJson(COL_FILTERS_KEY, {});
+  const clean: Record<string, Record<string, ColFilter>> = {};
+  if (saved && typeof saved === 'object' && !Array.isArray(saved)) {
+    Object.keys(saved).forEach(scope => {
+      const map = saved[scope];
+      if (!map || typeof map !== 'object' || Array.isArray(map)) return;
+      Object.keys(map).forEach(key => {
+        const f = map[key];
+        if (!f || typeof f !== 'object' || !Array.isArray(f.conds)) return;
+        const conds: FilterCond[] = f.conds
+          .filter((c: any) => c && typeof c.op === 'string' && ALL_OPS.has(c.op))
+          .slice(0, MAX_CONDS)
+          .map((c: any) => ({ op: c.op, a: typeof c.a === 'string' ? c.a.slice(0, 500) : '', b: typeof c.b === 'string' ? c.b.slice(0, 500) : '' }));
+        const picks: string[] = Array.isArray(f.picks) ? f.picks.filter((p: unknown) => typeof p === 'string').slice(0, 1000) : [];
+        if (!conds.length && !picks.length) return;
+        if (!clean[scope]) clean[scope] = {};
+        clean[scope][key] = { join: f.join === 'or' ? 'or' : 'and', conds, picks };
+      });
+    });
+  }
+  colFilters = clean;
+}
+
+// ---- compiling ----------------------------------------------------------------
+
+type StringTest = (text: string, lower: string) => boolean;
+
+function compileStringCond(c: FilterCond): StringTest | null {
+  if (c.op === 'empty') return (t: string) => isBlankText(t);
+  if (c.op === 'notempty') return (t: string) => !isBlankText(t);
+  const raw = c.a.trim();
+  if (!raw) return null;
+  const q = raw.toLowerCase();
+  switch (c.op) {
+    case 'contains': return (t: string, l: string) => l.includes(q);
+    case 'not_contains': return (t: string, l: string) => !l.includes(q);
+    case 'equals': return (t: string, l: string) => l.trim() === q;
+    case 'not_equals': return (t: string, l: string) => l.trim() !== q;
+    case 'starts': return (t: string, l: string) => l.startsWith(q);
+    case 'ends': return (t: string, l: string) => l.trimEnd().endsWith(q);
+    case 'regex':
+      try {
+        const re = new RegExp(raw, 'i'); // no g flag: test() is stateless
+        return (t: string) => re.test(t);
+      } catch { return null; }
+    default: return null;
+  }
+}
+
+function localTodayUtc(): number {
+  const d = new Date();
+  return Date.UTC(d.getFullYear(), d.getMonth(), d.getDate());
+}
+
+function compileNumericCond(type: ColType, c: FilterCond): ((x: number) => boolean) | null {
+  if (c.op === 'empty') return (x: number) => x !== x;
+  if (c.op === 'notempty') return (x: number) => x === x;
+  if (type === 'number' || type === 'percent') {
+    const a = parseNumberInput(c.a, type);
+    if (a !== a) return null;
+    const tol = 1e-9 * Math.max(1, Math.abs(a));
+    switch (c.op) {
+      case 'eq': return (x: number) => Math.abs(x - a) <= tol;
+      case 'ne': return (x: number) => x === x && Math.abs(x - a) > tol;
+      case 'gt': return (x: number) => x > a;
+      case 'ge': return (x: number) => x >= a;
+      case 'lt': return (x: number) => x < a;
+      case 'le': return (x: number) => x <= a;
+      case 'between': {
+        const b = parseNumberInput(c.b, type);
+        if (b !== b) return null;
+        const lo = Math.min(a, b);
+        const hi = Math.max(a, b);
+        return (x: number) => x >= lo && x <= hi;
+      }
+      default: return null;
+    }
+  }
+  // date / datetime / time: compare on the precision the user typed (day, minute or second)
+  if (c.op === 'last' || c.op === 'older') {
+    if (type === 'time' || !/^\d{1,5}$/.test(c.a.trim())) return null;
+    const from = localTodayUtc() - Number(c.a.trim()) * DAY_MS;
+    return c.op === 'last' ? (x: number) => x >= from && x < localTodayUtc() + DAY_MS : (x: number) => x < from;
+  }
+  const first = parseTemporalInput(c.a, type);
+  if (!first) return null;
+  const v = first.v;
+  const end = first.v + first.unit;
+  switch (c.op) {
+    case 'on': return (x: number) => x >= v && x < end;
+    case 'before': return (x: number) => x < v;
+    case 'after': return (x: number) => x >= end;
+    case 'onorbefore': return (x: number) => x < end;
+    case 'onorafter': return (x: number) => x >= v;
+    case 'between': {
+      const second = parseTemporalInput(c.b, type);
+      if (!second) return null;
+      const lo = Math.min(v, second.v);
+      const hi = Math.max(end, second.v + second.unit);
+      return (x: number) => x >= lo && x < hi;
+    }
+    default: return null;
+  }
+}
+
+function condIsValid(col: ColData, c: FilterCond): boolean {
+  return (col.type === 'string' ? compileStringCond(c) : compileNumericCond(col.type, c)) !== null;
+}
+
+function lowerOf(col: ColData): string[] {
+  if (col.lower) return col.lower;
+  const text = col.text || [];
+  const lower = new Array(text.length);
+  for (let i = 0; i < text.length; i++) lower[i] = text[i].toLowerCase();
+  col.lower = lower;
+  return lower;
+}
+
+/** Compiles one column filter into `(rowIndex) => boolean`, or null when it has no valid condition. Allocation-free per row. */
+function compileColFilter(col: ColData, f: ColFilter): ((i: number) => boolean) | null {
+  const or = f.join === 'or';
+  if (col.type === 'string') {
+    const tests: StringTest[] = [];
+    f.conds.forEach(c => { const t = compileStringCond(c); if (t) tests.push(t); });
+    const picks = f.picks.length ? new Set(f.picks) : null;
+    if (!tests.length && !picks) return null;
+    const test = (t: string, l: string): boolean => {
+      if (picks && !picks.has(isBlankText(t) ? '' : t)) return false;
+      if (!tests.length) return true;
+      if (or) {
+        for (let k = 0; k < tests.length; k++) if (tests[k](t, l)) return true;
+        return false;
+      }
+      for (let k = 0; k < tests.length; k++) if (!tests[k](t, l)) return false;
+      return true;
+    };
+    if (col.ids && col.dict) {
+      // Dictionary column: evaluate each distinct text once, a row costs one array lookup.
+      const ids = col.ids;
+      const flags = new Uint8Array(col.dict.length);
+      col.dict.forEach((text, id) => { flags[id] = test(text, text.toLowerCase()) ? 1 : 0; });
+      return (i: number) => flags[ids[i]] === 1;
+    }
+    const text = col.text || [];
+    const lower = lowerOf(col);
+    return (i: number) => test(text[i], lower[i]);
+  }
+  const tests: Array<(x: number) => boolean> = [];
+  f.conds.forEach(c => { const t = compileNumericCond(col.type, c); if (t) tests.push(t); });
+  if (!tests.length) return null;
+  const num = col.num || new Float64Array(0);
+  if (tests.length === 1) {
+    const only = tests[0];
+    return (i: number) => only(num[i]);
+  }
+  if (or) {
+    return (i: number) => {
+      const x = num[i];
+      for (let k = 0; k < tests.length; k++) if (tests[k](x)) return true;
+      return false;
+    };
+  }
+  return (i: number) => {
+    const x = num[i];
+    for (let k = 0; k < tests.length; k++) if (!tests[k](x)) return false;
+    return true;
+  };
+}
+
+/** Keeps only the conditions that compile (complete and valid) and the picked values; null when nothing is left. */
+function normalizeFilter(col: ColData, draft: ColFilter): ColFilter | null {
+  const conds = draft.conds.filter(c => condIsValid(col, c)).map(c => ({ op: c.op, a: opInputs(c.op) ? c.a.trim() : '', b: opInputs(c.op) === 2 ? c.b.trim() : '' }));
+  const picks = col.type === 'string' ? draft.picks.slice() : [];
+  if (!conds.length && !picks.length) return null;
+  return { join: draft.join, conds, picks };
+}
+
+/** Predicates of every active filter of the scope that matches a column in `cols`. */
+function scopePredicates(scope: string, cols: ColData[]): Array<(i: number) => boolean> {
+  const map = colFilters[scope];
+  const out: Array<(i: number) => boolean> = [];
+  if (!map) return out;
+  cols.forEach(col => {
+    const f = map[col.key];
+    if (!f) return;
+    const p = compileColFilter(col, f);
+    if (p) out.push(p);
+  });
+  return out;
+}
+
+/** Applies the scope's column filters to row objects (Watchlist, sheets); `indexOf` maps an item to its position in the column arrays. */
+function applyRowColumnFilters(scope: string, items: any[], cols: ColData[], indexOf: (item: any) => number): any[] {
+  const preds = scopePredicates(scope, cols);
+  if (!preds.length) { delete colStats[scope]; return items; }
+  const out: any[] = [];
+  for (let r = 0; r < items.length; r++) {
+    const i = indexOf(items[r]);
+    let ok = true;
+    for (let k = 0; k < preds.length; k++) if (!preds[k](i)) { ok = false; break; }
+    if (ok) out.push(items[r]);
+  }
+  colStats[scope] = { before: items.length, after: out.length };
+  return out;
+}
+
+/** The catalog predicates, compiled once per `filterCatalogIds` call. */
+function catalogColumnPredicates(): Array<(i: number) => boolean> {
+  return scopePredicates('All', catalogCols());
+}
+
+// ---- distinct values (multi-select) -----------------------------------------
+
+function distinctValues(col: ColData): Array<{ value: string; label: string; count: number }> | null {
+  if (col.distinctDone) return col.distinct;
+  col.distinctDone = true;
+  const counts = new Map<string, number>();
+  if (col.ids && col.dict) {
+    const per = new Uint32Array(col.dict.length);
+    for (let i = 0; i < col.ids.length; i++) per[col.ids[i]] += 1;
+    col.dict.forEach((text, id) => {
+      const value = isBlankText(text) ? '' : text;
+      counts.set(value, (counts.get(value) || 0) + per[id]);
+    });
+  } else if (col.text) {
+    for (let i = 0; i < col.text.length; i++) {
+      const value = isBlankText(col.text[i]) ? '' : col.text[i];
+      counts.set(value, (counts.get(value) || 0) + 1);
+      if (counts.size > MULTI_MAX_DISTINCT) { col.distinct = null; return null; }
+    }
+  }
+  if (counts.size > MULTI_MAX_DISTINCT || (counts.size > 30 && counts.size > col.n / 2)) { col.distinct = null; return null; }
+  const list = [...counts.entries()].map(([value, count]) => ({ value, label: value || '(empty)', count }));
+  list.sort((a, b) => collator.compare(a.value || '~', b.value || '~'));
+  col.distinct = list;
+  return list;
+}
+
+// ---- chips + header buttons ------------------------------------------------------
+
+const FUNNEL_SVG = '<svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor" aria-hidden="true"><path d="M1.5 2.5h13l-5 6v4.2l-3 1.6V8.5l-5-6z"/></svg>';
+
+function describeFilter(f: ColFilter, type: ColType): string {
+  const parts: string[] = [];
+  if (f.picks.length) {
+    const shown = f.picks.slice(0, 2).map(p => p || '(empty)').join(', ');
+    parts.push(f.picks.length > 2 ? `${shown} +${f.picks.length - 2}` : shown);
+  }
+  const conds = f.conds.map(c => {
+    const word = OP_CHIP_TEXT[c.op] || c.op;
+    const n = opInputs(c.op);
+    if (n === 0) return word;
+    if (c.op === 'between') return `between ${c.a} and ${c.b}`;
+    if (c.op === 'last') return `in the last ${c.a} days`;
+    if (c.op === 'older') return `older than ${c.a} days`;
+    return type === 'string' ? `${word} "${c.a}"` : `${word} ${c.a}`;
+  });
+  if (conds.length) parts.push(conds.join(f.join === 'or' ? ' OR ' : ' AND '));
+  return parts.join(' · ');
+}
+
+/** The funnel button inside a column header; empty when the active tab has no filterable column with this key. */
+function filterButton(fKey: string): string {
+  const scope = filterScope();
+  if (!scope) return '';
+  const col = scopeCols(scope).find(c => c.key === fKey);
+  if (!col) return '';
+  const active = Boolean(colFilters[scope] && colFilters[scope][fKey]);
+  const hint = col.type === 'percent'
+    ? ' Percent values: type 12.5 or 12.5% (both mean 12.5%); fractions such as 0.125 are NOT converted.'
+    : col.type === 'number' ? ' Numbers accept k, m, b, t suffixes (1.5b).' : '';
+  const tip = `${active ? 'Filter active - ' : ''}Filter ${col.label} (${COL_TYPE_LABELS[col.type]} column).${hint}`;
+  return `<button type="button" data-filter="${escapeHtml(fKey)}" data-coltype="${col.type}" class="cf-btn${active ? ' is-active' : ''}" aria-haspopup="dialog" aria-label="Filter ${escapeHtml(col.label)}" title="${escapeHtml(tip)}">${FUNNEL_SVG}</button>`;
+}
+
+function renderFilterBar(): void {
+  const scope = filterScope();
+  const map = scope ? colFilters[scope] : null;
+  const keys = map ? Object.keys(map) : [];
+  const bar = el.filterBar;
+  if (!scope || !keys.length) {
+    bar.hidden = true;
+    bar.innerHTML = '';
+    return;
+  }
+  const cols = scopeCols(scope);
+  const chips = keys.map(key => {
+    const col = cols.find(c => c.key === key);
+    const f = map ? map[key] : null;
+    if (!f) return '';
+    const label = col ? col.label : key.replace(/^c\d+:/, '');
+    const text = describeFilter(f, col ? col.type : 'string');
+    return `<span class="cf-chip" data-chip="${escapeHtml(key)}" tabindex="0" role="button" title="Edit the ${escapeHtml(label)} filter"><span class="cf-chip-label">${escapeHtml(label)}</span><span class="cf-chip-text">${escapeHtml(text)}</span><button type="button" class="cf-chip-x" data-chip-x="${escapeHtml(key)}" aria-label="Remove the ${escapeHtml(label)} filter" title="Remove the ${escapeHtml(label)} filter">✕</button></span>`;
+  }).join('');
+  const stat = colStats[scope];
+  const counts = stat ? `<span class="cf-count" aria-live="polite">${stat.before.toLocaleString('en-US')} -&gt; ${stat.after.toLocaleString('en-US')} ${scopeNoun(scope)}</span>` : '';
+  bar.hidden = false;
+  bar.innerHTML = `${chips}<button type="button" class="dd-act" data-clear-all title="Remove every column filter of this tab (search, brand and category filters stay)">Clear all filters</button>${counts}`;
+}
+
+function removeColFilter(scope: string, key: string): void {
+  const map = colFilters[scope];
+  if (!map) return;
+  delete map[key];
+  if (!Object.keys(map).length) delete colFilters[scope];
+  persistColFilters();
+  render();
+}
+
+function clearColumnFilters(scope: string): void {
+  delete colFilters[scope];
+  persistColFilters();
+  render();
+}
+
+// ---- the popover ----------------------------------------------------------------------
+
+type PopoverCtx = { scope: string; key: string; col: ColData };
+
+let cfPanel: any = null;
+let cfBackdrop: any = null;
+let cfCtx: PopoverCtx | null = null;
+let cfDraft: ColFilter = { join: 'and', conds: [], picks: [] };
+let cfValueQuery = '';
+let cfCommitTimer: any = 0;
+let cfCloseTimer: any = 0;
+let cfAnchor: any = null;
+
+function emptyCond(type: ColType): FilterCond {
+  return { op: defaultOp(type), a: '', b: '' };
+}
+
+function cfInputType(type: ColType, op: string): string {
+  if (op === 'last' || op === 'older') return 'number';
+  if (type === 'date') return 'date';
+  if (type === 'datetime') return 'datetime-local';
+  if (type === 'time') return 'time';
+  return 'text';
+}
+
+function cfPlaceholder(type: ColType, op: string): string {
+  if (type === 'percent') return '12.5 or 12.5%';
+  if (type === 'number') return 'e.g. 1000 or 1.5b';
+  if (type === 'string') return op === 'regex' ? 'e.g. ^(iShares|Vanguard)' : 'text';
+  return op === 'last' || op === 'older' ? 'days' : '';
+}
+
+function cfCondHtml(ctx: PopoverCtx, c: FilterCond, index: number): string {
+  const type = ctx.col.type;
+  const n = opInputs(c.op);
+  const inType = cfInputType(type, c.op);
+  const mode = inType === 'text' ? ' inputmode="decimal"' : '';
+  const ph = escapeHtml(cfPlaceholder(type, c.op));
+  const modeAttr = type === 'string' ? '' : mode;
+  const input = (field: string, value: string) => `<input type="${inType}" class="dd-input cf-in" data-f="${field}" value="${escapeHtml(value)}" placeholder="${ph}" autocomplete="off" spellcheck="false"${modeAttr}${inType === 'number' ? ' min="0" step="1"' : ''} aria-label="${field === 'a' ? 'Value' : 'Second value'}" />`;
+  const options = opsFor(type).map(([op, label]) => `<option value="${op}"${op === c.op ? ' selected' : ''}>${escapeHtml(label)}</option>`).join('');
+  const presets = c.op === 'last' || c.op === 'older'
+    ? `<div class="cf-presets">${[7, 30, 90, 365].map(d => `<button type="button" class="dd-act" data-preset="${d}">${d === 365 ? '1y' : `${d}d`}</button>`).join('')}</div>`
+    : '';
+  return `<div class="cf-cond" data-ci="${index}">
+    <div class="cf-row"><select class="dd-input cf-sel" data-f="op" aria-label="Operator">${options}</select><button type="button" class="cf-del" data-del aria-label="Remove condition" title="Remove condition">✕</button></div>
+    ${n ? `<div class="cf-row">${input('a', c.a)}${n === 2 ? `<span class="cf-and">and</span>${input('b', c.b)}` : ''}</div>` : ''}
+    ${presets}
+    <div class="cf-err" hidden></div>
+  </div>`;
+}
+
+function cfEnsurePanel(): void {
+  if (cfPanel) return;
+  cfPanel = document.createElement('div');
+  cfPanel.id = 'filter-panel';
+  cfPanel.className = 'dd-panel cf-panel';
+  cfPanel.hidden = true;
+  cfPanel.setAttribute('role', 'dialog');
+  cfBackdrop = document.createElement('div');
+  cfBackdrop.className = 'dd-backdrop';
+  document.body.appendChild(cfBackdrop); // portaled like the dropdowns: no ancestor can clip or cover it
+  document.body.appendChild(cfPanel);
+  cfBackdrop.addEventListener('click', () => closeColumnFilter());
+  cfPanel.addEventListener('input', cfOnInput);
+  cfPanel.addEventListener('change', cfOnChange);
+  cfPanel.addEventListener('click', cfOnClick);
+  cfPanel.addEventListener('keydown', (event: any) => {
+    if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closeColumnFilter(true); return; }
+    if (event.key === 'Enter' && event.target && event.target.matches && event.target.matches('.cf-in')) { event.preventDefault(); closeColumnFilter(true); }
+  });
+  document.addEventListener('pointerdown', (event: any) => {
+    if (!cfCtx) return;
+    const t = event.target;
+    if (cfPanel.contains(t) || cfBackdrop.contains(t)) return;
+    if (t && t.closest && (t.closest('[data-filter]') || t.closest('[data-chip]'))) return; // their click handlers toggle / retarget the popover
+    closeColumnFilter();
+  });
+  window.addEventListener('resize', () => { if (cfCtx) cfPlace(); });
+  window.addEventListener('scroll', (event: any) => { if (cfCtx && !(cfPanel.contains(event.target))) cfPlace(); }, { passive: true, capture: true });
+}
+
+function cfAnchorEl(): any {
+  if (!cfCtx) return null;
+  const sel = `[data-filter="${cfCtx.key.replace(/["\\]/g, '\\$&')}"]`;
+  const button = el.tableHead.querySelector(sel);
+  if (button) return button;
+  return el.filterBar.querySelector(`[data-chip="${cfCtx.key.replace(/["\\]/g, '\\$&')}"]`);
+}
+
+function cfPlace(): void {
+  if (!cfPanel || !cfCtx) return;
+  cfPanel.style.left = '';
+  cfPanel.style.top = '';
+  cfPanel.style.bottom = '';
+  cfPanel.style.maxHeight = '';
+  if (window.matchMedia('(max-width: 639px)').matches) return; // bottom sheet, positioned by CSS
+  const anchor = cfAnchorEl();
+  if (!anchor) return;
+  cfAnchor = anchor;
+  const rect = anchor.getBoundingClientRect();
+  const width = cfPanel.offsetWidth;
+  const natural = cfPanel.offsetHeight;
+  const below = window.innerHeight - rect.bottom - 16;
+  const above = rect.top - 16;
+  const flip = below < Math.min(natural, 360) && above > below;
+  cfPanel.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - width - 8))}px`;
+  cfPanel.style.maxHeight = `${Math.max(220, flip ? above : below) - 8}px`;
+  if (flip) {
+    cfPanel.style.top = 'auto';
+    cfPanel.style.bottom = `${window.innerHeight - rect.top + 8}px`;
+    cfPanel.style.transformOrigin = 'bottom left';
+  } else {
+    cfPanel.style.top = `${rect.bottom + 8}px`;
+    cfPanel.style.transformOrigin = 'top left';
+  }
+}
+
+function cfHint(col: ColData): string {
+  if (col.type === 'percent') return 'Percent column: values are percent numbers. Type 12.5 or 12.5% (both mean 12.5%). Fractions such as 0.125 are NOT converted to 12.5%. Empty values match only "is empty".';
+  if (col.type === 'number') return 'Number column: 1,234.5 and the suffixes k, m, b, t (1.5b) are understood. Empty values match only "is empty".';
+  if (col.type === 'date') return 'Date column: pick a date (compared by day, UTC calendar date). Empty values match only "is empty".';
+  if (col.type === 'datetime') return 'Datetime column: a date compares by day, a date with time by the minute (or second). Empty values match only "is empty".';
+  if (col.type === 'time') return 'Time column: HH:mm or HH:mm:ss. Empty values match only "is empty".';
+  return 'Text is matched case-insensitively. Several conditions combine with AND or OR; values picked above combine with them by AND.';
+}
+
+function cfRenderShell(ctx: PopoverCtx): void {
+  const col = ctx.col;
+  const multi = col.type === 'string' && distinctValues(col) !== null;
+  cfPanel.setAttribute('aria-label', `Filter ${col.label}`);
+  cfPanel.innerHTML = `
+    <div class="cf-head">
+      <span class="cf-title" title="${escapeHtml(col.label)}">${escapeHtml(col.label)}</span>
+      <span class="cf-type cf-type-${col.type}">${COL_TYPE_LABELS[col.type]}</span>
+      <button type="button" class="cf-x" data-close aria-label="Close filter" title="Close (Esc)">✕</button>
+    </div>
+    <div class="cf-body themed-scroll">
+      ${multi ? `<div class="cf-sec" data-sec="values">
+        <div class="cf-sec-title">Values</div>
+        <div class="dd-search cf-vsearch">
+          <svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="9" cy="9" r="5.5"/><path d="m13.5 13.5 3.5 3.5"/></svg>
+          <input type="text" class="dd-input cf-vq" placeholder="Search values..." aria-label="Search values" autocomplete="off" spellcheck="false" />
+        </div>
+        <div class="dd-actions" role="group" aria-label="Bulk actions for the shown values">
+          <button type="button" class="dd-act" data-vact="all" title="Pick every shown value">All shown</button>
+          <button type="button" class="dd-act" data-vact="none" title="Unpick every shown value">Clear</button>
+          <span class="dd-count cf-vcount" aria-live="polite"></span>
+        </div>
+        <div class="dd-list themed-scroll cf-vlist" role="listbox" aria-multiselectable="true" aria-label="Values of ${escapeHtml(col.label)}"></div>
+      </div>` : ''}
+      <div class="cf-sec" data-sec="conds">
+        <div class="cf-sec-title">Conditions<span class="cf-join" data-join-wrap hidden>match <button type="button" data-join="and" class="dd-seltoggle" aria-pressed="true">all</button><button type="button" data-join="or" class="dd-seltoggle" aria-pressed="false">any</button></span></div>
+        <div class="cf-conds"></div>
+        <button type="button" class="dd-act cf-add" data-add>+ Add condition</button>
+        <p class="cf-hint">${escapeHtml(cfHint(col))}</p>
+      </div>
+    </div>
+    <div class="cf-foot">
+      <button type="button" class="dd-act" data-clear-col title="Remove the filter of this column">Clear column</button>
+      <span class="cf-foot-count" aria-live="polite"></span>
+      <button type="button" class="cf-done" data-close>Done</button>
+    </div>`;
+}
+
+function cfRenderConds(): void {
+  if (!cfCtx) return;
+  const ctx = cfCtx;
+  const box: any = cfPanel.querySelector('.cf-conds');
+  box.innerHTML = cfDraft.conds.map((c, i) => cfCondHtml(ctx, c, i)).join('');
+  const joinWrap: any = cfPanel.querySelector('[data-join-wrap]');
+  joinWrap.hidden = cfDraft.conds.length < 2;
+  cfPanel.querySelectorAll('[data-join]').forEach((button: any) => {
+    const on = button.dataset.join === cfDraft.join;
+    button.classList.toggle('is-on', on);
+    button.setAttribute('aria-pressed', String(on));
+  });
+  cfPanel.querySelector('[data-add]').hidden = cfDraft.conds.length >= MAX_CONDS;
+  cfDraft.conds.forEach((c, i) => cfMarkInvalid(i));
+}
+
+/** Red state for a typed value that does not parse (the condition is ignored until it does). */
+function cfMarkInvalid(index: number): void {
+  if (!cfCtx) return;
+  const c = cfDraft.conds[index];
+  const row: any = cfPanel.querySelector(`.cf-cond[data-ci="${index}"]`);
+  if (!row || !c) return;
+  const needs = opInputs(c.op);
+  const typed = needs > 0 && (c.a.trim() !== '' || c.b.trim() !== '');
+  const bad = typed && !condIsValid(cfCtx.col, c);
+  row.querySelectorAll('.cf-in').forEach((input: any) => input.classList.toggle('cf-bad', bad));
+  const err: any = row.querySelector('.cf-err');
+  err.hidden = !bad;
+  err.textContent = bad ? (c.op === 'regex' ? 'Invalid regular expression - ignored' : needs === 2 && (!c.a.trim() || !c.b.trim()) ? 'Both values are needed' : 'Not a valid value - ignored') : '';
+}
+
+function cfRenderValues(): void {
+  if (!cfCtx) return;
+  const list: any = cfPanel.querySelector('.cf-vlist');
+  if (!list) return;
+  const all = distinctValues(cfCtx.col) || [];
+  const tokens = normalizeSearchText(cfValueQuery).split(/\s+/).filter(Boolean);
+  const shown = all.filter(item => !tokens.length || tokens.every(token => item.label.toLowerCase().includes(token)));
+  const picked = new Set(cfDraft.picks);
+  list.innerHTML = shown.length
+    ? shown.map(item => `<div class="dd-opt" role="option" data-v="${escapeHtml(item.value)}" aria-selected="${picked.has(item.value)}">
+        <span class="dd-check">${DD_TICK}</span>
+        <span class="dd-name" title="${escapeHtml(item.label)}">${escapeHtml(item.label)}</span>
+        <span class="dd-num">${item.count.toLocaleString('en-US')}</span>
+        <button type="button" class="dd-only" data-vonly tabindex="-1" aria-label="Only ${escapeHtml(item.label)}">Only</button>
+      </div>`).join('')
+    : `<div class="dd-empty">No values match “${escapeHtml(cfValueQuery.trim())}”</div>`;
+  const pickedCount = cfDraft.picks.length;
+  cfPanel.querySelector('.cf-vcount').textContent = pickedCount ? `${pickedCount} of ${all.length} picked` : `${all.length} values, none picked`;
+}
+
+function cfUpdateFooter(): void {
+  if (!cfCtx || !cfPanel) return;
+  const stat = colStats[cfCtx.scope];
+  const text: any = cfPanel.querySelector('.cf-foot-count');
+  const active = Boolean(colFilters[cfCtx.scope] && colFilters[cfCtx.scope][cfCtx.key]);
+  text.textContent = stat && Object.keys(colFilters[cfCtx.scope] || {}).length ? `${stat.after.toLocaleString('en-US')} of ${stat.before.toLocaleString('en-US')} ${scopeNoun(cfCtx.scope)}` : '';
+  cfPanel.querySelector('[data-clear-col]').disabled = !active && !cfDraft.picks.length && !cfDraft.conds.some(c => c.a || c.b || opInputs(c.op) === 0);
+}
+
+function cfCommit(): void {
+  if (!cfCtx) return;
+  clearTimeout(cfCommitTimer);
+  const { scope, key, col } = cfCtx;
+  const next = normalizeFilter(col, cfDraft);
+  const map = colFilters[scope] || (colFilters[scope] = {});
+  const before = JSON.stringify(map[key] || null);
+  if (next) map[key] = next;
+  else delete map[key];
+  if (!Object.keys(map).length) delete colFilters[scope];
+  if (JSON.stringify(next) === before) { cfUpdateFooter(); return; }
+  persistColFilters();
+  render();
+  cfUpdateFooter();
+}
+
+function cfScheduleCommit(): void {
+  clearTimeout(cfCommitTimer);
+  cfCommitTimer = setTimeout(cfCommit, 160);
+}
+
+function cfOnInput(event: any): void {
+  const t = event.target;
+  if (!cfCtx || !t) return;
+  if (t.classList.contains('cf-vq')) { cfValueQuery = t.value; cfRenderValues(); return; }
+  const row = t.closest('.cf-cond');
+  if (!row || !t.dataset.f || t.dataset.f === 'op') return;
+  const index = Number(row.dataset.ci);
+  const c = cfDraft.conds[index];
+  if (!c) return;
+  if (t.dataset.f === 'a') c.a = t.value;
+  else c.b = t.value;
+  cfMarkInvalid(index);
+  cfScheduleCommit();
+}
+
+function cfOnChange(event: any): void {
+  const t = event.target;
+  if (!cfCtx || !t || !t.classList.contains('cf-sel')) return;
+  const row = t.closest('.cf-cond');
+  const index = Number(row.dataset.ci);
+  const c = cfDraft.conds[index];
+  if (!c) return;
+  c.op = t.value;
+  if (opInputs(c.op) < 2) c.b = '';
+  if (opInputs(c.op) === 0) c.a = '';
+  cfRenderConds();
+  const focusTarget: any = cfPanel.querySelector(`.cf-cond[data-ci="${index}"] .cf-in`);
+  if (focusTarget) focusTarget.focus({ preventScroll: true });
+  cfCommit();
+}
+
+function cfOnClick(event: any): void {
+  const t = event.target;
+  if (!cfCtx || !t || !t.closest) return;
+  if (t.closest('[data-close]')) { closeColumnFilter(true); return; }
+  if (t.closest('[data-clear-col]')) {
+    cfDraft = { join: 'and', conds: [emptyCond(cfCtx.col.type)], picks: [] };
+    cfValueQuery = '';
+    const q: any = cfPanel.querySelector('.cf-vq');
+    if (q) q.value = '';
+    cfRenderConds();
+    cfRenderValues();
+    cfCommit();
+    return;
+  }
+  const join = t.closest('[data-join]');
+  if (join) { cfDraft.join = join.dataset.join === 'or' ? 'or' : 'and'; cfRenderConds(); cfCommit(); return; }
+  if (t.closest('[data-add]')) {
+    if (cfDraft.conds.length < MAX_CONDS) cfDraft.conds.push(emptyCond(cfCtx.col.type));
+    cfRenderConds();
+    const inputs = cfPanel.querySelectorAll('.cf-cond');
+    const last: any = inputs[inputs.length - 1];
+    const focusTarget: any = last && last.querySelector('.cf-in');
+    if (focusTarget) focusTarget.focus({ preventScroll: true });
+    return;
+  }
+  const del = t.closest('[data-del]');
+  if (del) {
+    const index = Number(del.closest('.cf-cond').dataset.ci);
+    cfDraft.conds.splice(index, 1);
+    if (!cfDraft.conds.length) cfDraft.conds.push(emptyCond(cfCtx.col.type));
+    cfRenderConds();
+    cfCommit();
+    return;
+  }
+  const preset = t.closest('[data-preset]');
+  if (preset) {
+    const index = Number(preset.closest('.cf-cond').dataset.ci);
+    const c = cfDraft.conds[index];
+    if (c) { c.a = preset.dataset.preset; cfRenderConds(); cfCommit(); }
+    return;
+  }
+  const act = t.closest('[data-vact]');
+  if (act) {
+    const all = distinctValues(cfCtx.col) || [];
+    const tokens = normalizeSearchText(cfValueQuery).split(/\s+/).filter(Boolean);
+    const shown = all.filter(item => !tokens.length || tokens.every(token => item.label.toLowerCase().includes(token))).map(item => item.value);
+    const next = new Set(cfDraft.picks);
+    if (act.dataset.vact === 'all') shown.forEach(v => next.add(v));
+    else shown.forEach(v => next.delete(v));
+    cfDraft.picks = [...next];
+    cfRenderValues();
+    cfCommit();
+    return;
+  }
+  const row = t.closest('.dd-opt');
+  if (row && row.dataset.v !== undefined) {
+    const value = row.dataset.v;
+    if (t.closest('[data-vonly]')) cfDraft.picks = [value];
+    else cfDraft.picks = cfDraft.picks.includes(value) ? cfDraft.picks.filter(p => p !== value) : [...cfDraft.picks, value];
+    cfRenderValues();
+    cfCommit();
+  }
+}
+
+function openColumnFilter(fKey: string): void {
+  const scope = filterScope();
+  if (!scope) return;
+  const col = scopeCols(scope).find(c => c.key === fKey);
+  if (!col) return;
+  cfEnsurePanel();
+  if (cfCtx && cfCtx.scope === scope && cfCtx.key === fKey) { closeColumnFilter(true); return; }
+  if (cfCtx) cfCommit();
+  const ctx: PopoverCtx = { scope, key: fKey, col };
+  cfCtx = ctx;
+  const saved = colFilters[scope] && colFilters[scope][fKey];
+  cfDraft = saved
+    ? { join: saved.join, conds: saved.conds.map(c => ({ op: c.op, a: c.a, b: c.b })), picks: saved.picks.slice() }
+    : { join: 'and', conds: [], picks: [] };
+  if (!cfDraft.conds.length) cfDraft.conds.push(emptyCond(col.type));
+  cfValueQuery = '';
+  clearTimeout(cfCloseTimer);
+  cfRenderShell(ctx);
+  cfRenderConds();
+  cfRenderValues();
+  cfUpdateFooter();
+  cfPanel.hidden = false;
+  cfPlace();
+  void cfPanel.offsetWidth; // reflow so the transition starts from the closed state
+  cfPanel.classList.add('is-open');
+  cfBackdrop.classList.add('is-open');
+  const first: any = cfPanel.querySelector('.cf-in') || cfPanel.querySelector('.cf-vq') || cfPanel.querySelector('.cf-sel');
+  if (first) first.focus({ preventScroll: true });
+  const button: any = cfAnchorEl();
+  if (button && button.setAttribute) button.setAttribute('aria-expanded', 'true');
+}
+
+function closeColumnFilter(restoreFocus = false): void {
+  if (!cfCtx || !cfPanel) return;
+  cfCommit();
+  const key = cfCtx.key;
+  cfCtx = null;
+  cfPanel.classList.remove('is-open');
+  cfBackdrop.classList.remove('is-open');
+  const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  clearTimeout(cfCloseTimer);
+  cfCloseTimer = setTimeout(() => { if (!cfCtx) cfPanel.hidden = true; }, reduce ? 0 : 200);
+  if (restoreFocus) {
+    const button: any = el.tableHead.querySelector(`[data-filter="${key.replace(/["\\]/g, '\\$&')}"]`);
+    if (button) button.focus({ preventScroll: true });
+  }
+}
+
+/** Called at the end of render(): keeps an open popover in sync with the new header and the new counts. */
+function syncColumnFilterUi(): void {
+  renderFilterBar();
+  if (!cfCtx) return;
+  if (filterScope() !== cfCtx.scope) { closeColumnFilter(); return; }
+  cfUpdateFooter();
+  cfPlace();
+}
+
+function bindColumnFilterEvents(): void {
+  el.tableHead.addEventListener('click', (event: any) => {
+    const target = event.target;
+    if (!target || typeof target.closest !== 'function') return;
+    const button = target.closest('[data-filter]');
+    if (!button) return;
+    event.stopPropagation();
+    openColumnFilter(button.dataset.filter || '');
+  });
+  el.filterBar.addEventListener('click', (event: any) => {
+    const target = event.target;
+    if (!target || typeof target.closest !== 'function') return;
+    const scope = filterScope();
+    if (!scope) return;
+    if (target.closest('[data-clear-all]')) { closeColumnFilter(); clearColumnFilters(scope); return; }
+    const x = target.closest('[data-chip-x]');
+    if (x) { event.stopPropagation(); if (cfCtx && cfCtx.key === x.dataset.chipX) closeColumnFilter(); removeColFilter(scope, x.dataset.chipX); return; }
+    const chip = target.closest('[data-chip]');
+    if (chip) openColumnFilter(chip.dataset.chip);
+  });
+  el.filterBar.addEventListener('keydown', (event: any) => {
+    const chip = event.target && event.target.matches && event.target.matches('[data-chip]') ? event.target : null;
+    if (chip && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); openColumnFilter(chip.dataset.chip); }
+  });
+}
+
+// =========================================================================
 // 7. Table rendering, sorting & tooltips
 // =========================================================================
 
@@ -2082,6 +3323,7 @@ function render(): void {
   if (state.activeTab === 'watchlist') renderWatchlistTable();
   else if (isDetailTab(state.activeTab)) renderDetailTable(detailTabKey(state.activeTab));
   else renderFundsTable();
+  syncColumnFilterUi();
   fitTableHeight();
   renderStaticLoadSentinel();
 }
@@ -2168,12 +3410,12 @@ function sortRows(rows: any[]): any[] {
   });
 }
 
-function sortHeader(label: string, key: string, numeric = false, extraClass = ''): string {
+function sortHeader(label: string, key: string, numeric = false, extraClass = '', fKey = key): string {
   const active = state.sortKey === key;
   const arrow = active ? (state.sortDir === 'asc' ? ' ↑' : ' ↓') : '';
   const align = numeric ? ' text-right' : '';
   const tooltip = getHeaderTooltip(label);
-  return `<th class="py-3.5 px-4${align}${extraClass ? ' ' + extraClass : ''}" title="${escapeHtml(tooltip)}"><button data-sort="${escapeHtml(key)}" title="${escapeHtml(tooltip)}" class="uppercase tracking-wider hover:text-blue-600 dark:hover:text-blue-400 focus:outline-none focus:text-blue-600 dark:focus:text-blue-400">${escapeHtml(label)}${arrow}</button></th>`;
+  return `<th class="py-3.5 px-4${align}${extraClass ? ' ' + extraClass : ''}" title="${escapeHtml(tooltip)}"><div class="inline-flex items-center gap-1"><button data-sort="${escapeHtml(key)}" title="${escapeHtml(tooltip)}" class="uppercase tracking-wider hover:text-blue-600 dark:hover:text-blue-400 focus:outline-none focus:text-blue-600 dark:focus:text-blue-400">${escapeHtml(label)}${arrow}</button>${filterButton(fKey)}</div></th>`;
 }
 
 function indexHeader(): string {
@@ -2319,7 +3561,7 @@ function growCatalogChunk(): void {
 function renderFundsTable(): void {
   const ids = catalogIds();
   catalogVisibleIds = ids;
-  const sig = [state.sortKey, state.sortDir, catalogQuery(), hiddenCategoriesSig(), hiddenBrandsSig(), state.hideStale, state.staleDays, store ? store.version : 0, blacklistVersion].join('|');
+  const sig = [state.sortKey, state.sortDir, catalogQuery(), hiddenCategoriesSig(), hiddenBrandsSig(), state.hideStale, state.staleDays, store ? store.version : 0, blacklistVersion, colFilterSig('All')].join('|');
   if (sig !== catalogChunkSig) {
     catalogChunkSig = sig;
     catalogRenderedCount = CATALOG_CHUNK;
@@ -2505,16 +3747,18 @@ function getDedupedWatchlistRows(): WatchlistRow[] {
     row.searchIndex = [row.symbol, row.name, row.cusips.join(' '), row.funds.map(keyTicker).join(' ')].join(' ').toLowerCase();
   });
   const rows = [...map.values()];
+  rows.forEach((row, index) => { row.idx = index; }); // position in the column arrays of the column filters
   watchlistCache = { signature, rows };
   return rows;
 }
 
 function getVisibleWatchlistRows(): WatchlistRow[] {
-  return sortRows(filterRows(getDedupedWatchlistRows()));
+  const searched = filterRows(getDedupedWatchlistRows());
+  return sortRows(applyRowColumnFilters('watchlist', searched, watchlistCols(), (row: any) => row.idx));
 }
 
 function watchlistChunkSignature(rows: WatchlistRow[]): string {
-  return [state.sortKey, state.sortDir, currentQuery()].join('|'); // not the row count: rows stream in while loading
+  return [state.sortKey, state.sortDir, currentQuery(), colFilterSig('watchlist')].join('|'); // not the row count: rows stream in while loading
 }
 
 function growWatchlistChunk(): void {
@@ -2618,11 +3862,17 @@ function renderEmptyDetail(message: string): void {
 
 /** Filtered + sorted view of a sheet exactly as the table shows it (also used by the exports). */
 function sheetView(headers: string[], sourceRows: string[][]): any[] {
-  return sortRows(filterRows(sourceRows.map((row, sourceIndex) => {
+  const searched = filterRows(sourceRows.map((row, sourceIndex) => {
     const cells: Record<string, unknown> = { values: row, searchIndex: row.join(' ').toLowerCase(), rank: sourceIndex };
     headers.forEach((header, index) => { cells[`col${index}`] = row[index] ?? ''; });
     return cells;
-  })));
+  }));
+  const scope = filterScope();
+  const filtered = scope && scope !== 'All' && scope !== 'watchlist' && colFilters[scope]
+    ? applyRowColumnFilters(scope, searched, sheetCols(headers, sourceRows), (item: any) => item.rank)
+    : searched;
+  if (!scope || !colFilters[scope]) delete colStats[scope || ''];
+  return sortRows(filtered);
 }
 
 /** Overview rows exactly as the table shows them (filtered + sorted). */
@@ -2668,7 +3918,7 @@ function renderSheetTable(fund: FundRef, sheet: 'holdings' | 'history'): void {
   el.tableHead.innerHTML = `
     <tr>
       ${indexHeader()}
-      ${headers.map((header, index) => sortHeader(header || `Col ${index + 1}`, `col${index}`, NUMERIC_SHEET_HEADERS.includes(header))).join('')}
+      ${headers.map((header, index) => sortHeader(header || `Col ${index + 1}`, `col${index}`, NUMERIC_SHEET_HEADERS.includes(header), '', sheetFilterKey(index, header))).join('')}
     </tr>
   `;
   bindSortHeaders();
@@ -2809,7 +4059,7 @@ function renderDistributionsTable(fund: FundRef): void {
   el.tableHead.innerHTML = `
     <tr>
       ${indexHeader()}
-      ${headers.map((header, index) => sortHeader(header, `col${index}`)).join('')}
+      ${headers.map((header, index) => sortHeader(header, `col${index}`, false, '', sheetFilterKey(index, header))).join('')}
     </tr>
   `;
   bindSortHeaders();
@@ -3383,6 +4633,7 @@ function bindEvents(): void {
 
   initTooltips();
   initSearchSuggest();
+  bindColumnFilterEvents();
 
   // Filters bar: brand and category multi-select popovers, hide stale returns.
   brandDd = createDropdown({
@@ -3485,6 +4736,7 @@ function init(): void {
   const savedTab = restoreSiteState();
   if (savedTab) state.activeTab = savedTab;
   restoreSearches();
+  restoreColFilters();
   restoreTabSorts();
   applySortForTab(state.activeTab);
   applyTheme(lsGet(THEME_KEY) === 'dark');
