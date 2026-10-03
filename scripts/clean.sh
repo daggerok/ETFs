@@ -7,6 +7,10 @@
 set -uo pipefail
 cd "$(dirname "$0")/.." || exit 1
 
+# the whole body is one brace group: bash parses it completely before running anything, so
+# replacing this file mid-run (git pull) cannot make bash resume reading at a stale offset
+{
+
 REPOS=(AAM aberdeen Amplify ARK Capital-Group Fidelity First-Trust Franklin Global-X Goldman-Sachs Invesco iShares JPMorgan Neos Northern-Trust Pacer Parametric ProShares Schwab SP-Funds SPDR Sprott Tema Themes VanEck Vanguard VictoryShares WisdomTree Xtrackers)
 
 usage() {
@@ -91,3 +95,5 @@ removed=$(grep -c '^removed ' "$LOG"); skipped=$(grep -c '^skip ' "$LOG"); kept=
 echo
 echo "Done: $removed removed, $skipped skipped, $kept kept (unsaved work), $failed failed."
 [ $((kept + failed)) -eq 0 ] || exit 1
+}
+exit $?
