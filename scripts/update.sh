@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Update the sibling ETF repos cloned in the hub folder (the parent of scripts/):
-# fetch with prune and tags, switch to main (or master) and fast-forward it.
+# fetch with prune and tags, switch to main (or master) whatever branch the repo is on, and pull it fast-forward only.
 # Output streams live with one job; with several jobs each repo's block is printed as soon as it finishes.
 
 set -uo pipefail
@@ -90,10 +90,12 @@ run_repo() {
     if git show-ref --verify --quiet refs/heads/main || git show-ref --verify --quiet refs/remotes/origin/main; then target="main"
     elif git show-ref --verify --quiet refs/heads/master || git show-ref --verify --quiet refs/remotes/origin/master; then target="master"; fi
     if [ -z "$target" ]; then echo "Warning: neither main nor master found, skipping."; exit 0; fi
+    current="$(git branch --show-current)"
+    [ "$current" = "$target" ] || echo "Currently on '${current:-detached HEAD}': switching to $target..."
     echo "Checking out $target..."
     git checkout "$target" || exit 1
-    echo "Fast-forwarding $target..."
-    git merge --ff-only "origin/$target" || git pull origin "$target"
+    echo "Pulling $target (fast-forward only)..."
+    git pull --ff-only origin "$target" || exit 1
   )
   code=$?
   if [ $code -eq 0 ]; then echo "OK: $repo"; else echo "FAILED: $repo (exit $code)"; fi
