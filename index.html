@@ -281,85 +281,28 @@
     .dark .src-none{background:rgba(100,116,139,.2);color:#94a3b8;border-color:rgba(100,116,139,.4)}
     .stale-cell{opacity:.55}
 
-    /* Column filters: funnel button in every header, popover (reuses .dd-panel), chips row above the table */
-    .cf-btn{flex:none;display:inline-flex;align-items:center;justify-content:center;width:1.25rem;height:1.25rem;border-radius:.375rem;border:1px solid transparent;color:#94a3b8;background:transparent;cursor:pointer;transition:background-color .12s,color .12s,border-color .12s}
-    .cf-btn:hover{background:#e2e8f0;color:#334155}
-    .cf-btn:focus-visible{outline:none;border-color:#3b82f6;box-shadow:0 0 0 3px rgba(59,130,246,.2)}
-    .cf-btn.is-active{background:#dbeafe;color:#1d4ed8;border-color:#bfdbfe}
-    .dark .cf-btn:hover{background:#334155;color:#e2e8f0}
-    .dark .cf-btn.is-active{background:rgba(59,130,246,.25);color:#93c5fd;border-color:rgba(59,130,246,.45)}
-    #filter-bar[hidden]{display:none}
-    .cf-chip{display:inline-flex;align-items:center;gap:.375rem;max-width:100%;padding:.2rem .3rem .2rem .6rem;border-radius:9999px;border:1px solid #bfdbfe;background:#eff6ff;color:#1d4ed8;cursor:pointer;line-height:1.25}
-    .cf-chip:hover{background:#dbeafe}
-    .cf-chip:focus-visible{outline:none;box-shadow:0 0 0 3px rgba(59,130,246,.3)}
-    .cf-chip-label{font-weight:700;white-space:nowrap}
-    .cf-chip-text{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:22rem;color:#1e40af}
-    .cf-chip-x{flex:none;width:1.125rem;height:1.125rem;border-radius:9999px;display:inline-flex;align-items:center;justify-content:center;font-size:.65rem;line-height:1;color:#3b82f6}
-    .cf-chip-x:hover{background:#bfdbfe;color:#1e3a8a}
-    .cf-count{margin-left:auto;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-weight:600;color:#475569;white-space:nowrap}
-    .dark .cf-chip{border-color:rgba(59,130,246,.45);background:rgba(30,64,175,.22);color:#93c5fd}
-    .dark .cf-chip:hover{background:rgba(30,64,175,.34)}
-    .dark .cf-chip-text{color:#bfdbfe}
-    .dark .cf-chip-x{color:#60a5fa}
-    .dark .cf-chip-x:hover{background:rgba(59,130,246,.3);color:#fff}
-    .dark .cf-count{color:#cbd5e1}
-    .cf-panel{width:23rem}
-    .cf-head{position:relative;flex:none;display:flex;align-items:center;gap:.5rem;padding:.7rem .75rem .35rem}
-    .cf-title{min-width:0;flex:1 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:.9375rem;font-weight:700;color:#0f172a}
-    .dark .cf-title{color:#f8fafc}
-    .cf-type{flex:none;font-size:.65rem;line-height:1;font-weight:700;letter-spacing:.03em;text-transform:uppercase;padding:.25rem .45rem;border-radius:9999px;border:1px solid #e2e8f0;background:#f1f5f9;color:#475569}
-    .cf-type-number,.cf-type-percent{background:#eff6ff;color:#1d4ed8;border-color:#bfdbfe}
-    .cf-type-date,.cf-type-datetime,.cf-type-time{background:#ecfdf5;color:#047857;border-color:#a7f3d0}
-    .dark .cf-type{background:#1e293b;border-color:#334155;color:#cbd5e1}
-    .dark .cf-type-number,.dark .cf-type-percent{background:rgba(30,64,175,.22);color:#93c5fd;border-color:rgba(59,130,246,.4)}
-    .dark .cf-type-date,.dark .cf-type-datetime,.dark .cf-type-time{background:rgba(16,185,129,.15);color:#6ee7b7;border-color:rgba(16,185,129,.35)}
-    .cf-x{flex:none;width:1.75rem;height:1.75rem;display:inline-flex;align-items:center;justify-content:center;border-radius:9999px;color:#64748b;font-size:.85rem;line-height:1}
-    .cf-x:hover{background:#f1f5f9;color:#0f172a}
-    .dark .cf-x:hover{background:#1e293b;color:#f1f5f9}
-    .cf-body{flex:1 1 auto;min-height:0;overflow-y:auto;overscroll-behavior:contain}
-    .cf-sec{padding:.25rem .625rem .625rem}
-    .cf-sec + .cf-sec{border-top:1px solid #f1f5f9}
-    .dark .cf-sec + .cf-sec{border-top-color:#1e293b}
-    .cf-sec-title{display:flex;align-items:center;justify-content:space-between;gap:.5rem;padding:.25rem .125rem;font-size:.7rem;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#64748b}
-    .cf-sec-title[hidden],.cf-join[hidden]{display:none}
-    .cf-join{display:inline-flex;align-items:center;gap:.25rem;text-transform:none;letter-spacing:0;font-weight:500}
-    .cf-vsearch{padding:.25rem 0}
-    .cf-vsearch svg{left:.75rem}
-    .cf-sec .dd-actions{padding:.25rem 0;align-items:center}
-    .cf-sec .dd-actions .dd-count{flex:1 1 auto;text-align:right}
-    .cf-panel .dd-list{max-height:11rem;padding:.25rem;border:1px solid #f1f5f9;border-radius:.5rem}
-    .dark .cf-panel .dd-list{border-color:#1e293b}
-    .cf-cond{display:flex;flex-direction:column;gap:.375rem;padding:.5rem;margin-bottom:.5rem;border:1px solid #e2e8f0;border-radius:.625rem;background:#f8fafc}
-    .dark .cf-cond{border-color:#334155;background:rgba(2,6,23,.5)}
-    .cf-row{display:flex;align-items:center;gap:.375rem}
-    .cf-row .cf-in,.cf-row .cf-sel{flex:1 1 0;min-width:0;padding:.4rem .6rem}
-    .cf-sel{appearance:auto}
-    .cf-and{flex:none;font-size:.75rem;color:#64748b}
-    .cf-del{flex:none;width:1.75rem;height:1.75rem;display:inline-flex;align-items:center;justify-content:center;border-radius:.5rem;color:#94a3b8;font-size:.8rem;line-height:1}
-    .cf-del:hover{background:#ffe4e6;color:#e11d48}
-    .dark .cf-del:hover{background:rgba(244,63,94,.2);color:#fda4af}
-    .cf-in.cf-bad{border-color:#f43f5e;box-shadow:0 0 0 3px rgba(244,63,94,.15)}
-    .cf-err{font-size:.7rem;color:#e11d48}
-    .cf-err[hidden]{display:none}
-    .dark .cf-err{color:#fda4af}
-    .cf-presets{display:flex;gap:.375rem}
-    .cf-add[hidden]{display:none}
-    .cf-hint{margin:.5rem .125rem 0;font-size:.7rem;line-height:1.4;color:#94a3b8}
-    .cf-foot{flex:none;display:flex;align-items:center;gap:.5rem;padding:.5rem .625rem;border-top:1px solid #e2e8f0;background:inherit}
-    .dark .cf-foot{border-top-color:#1e293b}
-    .cf-foot .dd-act:disabled{opacity:.45;cursor:default}
-    .cf-foot-count{flex:1 1 auto;min-width:0;text-align:center;font-size:.75rem;color:#64748b;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-    .dark .cf-foot-count{color:#94a3b8}
-    .cf-done{flex:none;font-size:.8125rem;font-weight:600;padding:.35rem .9rem;border-radius:.5rem;background:#2563eb;color:#fff;transition:background-color .12s}
-    .cf-done:hover{background:#3b82f6}
-    .cf-done:focus-visible{outline:none;box-shadow:0 0 0 3px rgba(59,130,246,.35)}
-    @media (max-width:639px){
-      .cf-panel{width:auto}
-      .cf-head{padding:1.1rem .75rem .35rem}
-      .cf-cond .cf-in,.cf-cond .cf-sel{font-size:1rem;min-height:2.5rem}
-      .cf-x{width:2rem;height:2rem}
-      .cf-panel .dd-list{max-height:12rem}
-    }
+    /* Column filters: the type badge in a header and a row of filter inputs under the headers */
+    .dd-trigger:disabled{opacity:.5;cursor:not-allowed}
+    .type-badge{flex:none;padding:0 .35rem;border-radius:.3rem;font-size:.6rem;line-height:1rem;font-weight:700;letter-spacing:.03em;border:1px solid transparent;cursor:pointer;opacity:.75;transition:opacity .12s,border-color .12s}
+    .type-badge:hover,.type-badge.is-override{opacity:1;border-color:#94a3b8}
+    .dark .type-badge:hover,.dark .type-badge.is-override{border-color:#64748b}
+    .filter-row th{padding:.3rem .5rem;background:#f8fafc;font-weight:400;text-transform:none;letter-spacing:normal;border-top:1px solid #e2e8f0}
+    .dark .filter-row th{background:#0f172a;border-top-color:#1e293b}
+    #table-scroll .filter-row .catalog-sticky-col{top:var(--head-h,2.75rem)}
+    .filter-wrap{position:relative;display:flex;align-items:center}
+    .filter-input{width:100%;min-width:6.5rem;box-sizing:border-box;padding:.2rem 1.4rem .2rem .45rem;border-radius:.4rem;border:1px solid #e2e8f0;background:#fff;color:#334155;font-size:.72rem;line-height:1.1rem;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+    .filter-input::placeholder{color:#94a3b8}
+    .filter-input:focus{outline:none;border-color:#3b82f6;box-shadow:0 0 0 3px rgba(59,130,246,.18)}
+    .filter-input.is-active{border-color:#93c5fd;background:#eff6ff;color:#1d4ed8}
+    .filter-input.is-invalid{border-color:#fda4af;background:#fff1f2;color:#be123c}
+    .filter-clear{position:absolute;right:.3rem;width:1rem;height:1rem;display:flex;align-items:center;justify-content:center;border-radius:9999px;color:#94a3b8;font-size:.65rem;line-height:1;cursor:pointer}
+    .filter-clear:hover{color:#334155;background:#e2e8f0}
+    .dark .filter-input{background:#020617;border-color:#334155;color:#e2e8f0}
+    .dark .filter-input::placeholder{color:#64748b}
+    .dark .filter-input.is-active{background:rgba(30,64,175,.28);border-color:rgba(59,130,246,.5);color:#93c5fd}
+    .dark .filter-input.is-invalid{background:rgba(190,18,60,.18);border-color:rgba(244,63,94,.5);color:#fda4af}
+    .dark .filter-clear:hover{color:#e2e8f0;background:#1e293b}
+    #table-scroll .filter-row .watchlist-sticky-col{top:var(--head-h,2.75rem)}
   </style>
 <style id="catalog-summary-styles">
     #app-subtitle:empty { display: none; }
@@ -437,6 +380,8 @@
           <button type="button" id="category-btn" class="dd-trigger" aria-haspopup="dialog" aria-expanded="false" aria-controls="category-panel"><span class="dd-label">Categories:</span><span class="dd-value" id="category-summary">...</span><span class="dd-badge" id="category-badge" hidden></span><svg class="dd-chev" viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 8 5 5 5-5"/></svg></button>
           <div id="category-panel" class="dd-panel dd-panel-wide" hidden></div>
         </div>
+        <button type="button" id="filters-btn" class="dd-trigger" aria-pressed="true" title="Show or hide the row of filter inputs under the column headers"><span class="dd-label">Column filters:</span><span class="dd-value" id="filters-summary">shown</span><span class="dd-badge" id="filters-badge" hidden></span></button>
+        <button type="button" id="clear-filters-btn" class="dd-act" hidden title="Clear every column filter of the shown table">Clear filters</button>
         <label class="inline-flex items-center gap-2 text-slate-600 dark:text-slate-300 cursor-pointer" title="Hide funds whose returns are older than the given number of days or have no known as-of date">
           <input type="checkbox" id="stale-toggle" class="w-4 h-4 accent-blue-600 cursor-pointer" />
           <span class="whitespace-nowrap">Hide stale &gt;</span>
@@ -473,7 +418,6 @@
       </nav>
 
       <div class="bg-white dark:bg-slate-800/50 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm backdrop-blur overflow-hidden">
-        <div id="filter-bar" hidden class="flex flex-wrap items-center gap-1.5 px-4 py-2.5 border-b border-slate-200 dark:border-slate-700 bg-slate-50/70 dark:bg-slate-900/40 text-xs" aria-label="Active column filters"></div>
         <div id="table-scroll" class="overflow-x-auto overflow-y-auto themed-scroll">
           <table class="w-full text-left whitespace-nowrap">
             <thead id="table-head" class="bg-slate-50 dark:bg-slate-900/95 text-slate-500 dark:text-slate-400 text-xs uppercase tracking-wider border-b border-slate-200 dark:border-slate-700 sticky top-0 z-20 backdrop-blur">
