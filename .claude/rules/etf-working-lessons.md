@@ -30,3 +30,9 @@
 - Parallel agents share one scratchpad: `pkill -f serve.ts` kills other agents' servers. Give each agent its own port range and kill by PID, not by pattern
 - A throwaway e2e config that works for one brand is not universal: dropdowns can be hidden (single category) and tiny catalogs (3 funds) break "select the 4th row" steps. Read the e2e output, not just the last line
 - Stocks merges use `--rebase --delete-branch`, ETF repos `--squash --delete-branch`
+
+## Owner preferences on structure and tooling (2026-10-04)
+- No Python anywhere: edit with the Edit tool or a throwaway Bun/TypeScript script kept in the scratchpad, never add a .py file or a python3 call
+- The structure is fixed: no new folder or file because it is convenient. If code or data is part of the updater it goes into scripts/update-data.ts (or JSON state into api/<feed>/); if it is test data it goes inline into the test file
+- Before moving a file, check whether the updater or tests really use it at runtime. A "snapshot" captured in the first sandbox (no network) was an investigation artifact: delete it with everything that existed only for it (the OFFLINE_SEED control, its fallbacks and tests) instead of relocating it (VanEck, Goldman-Sachs)
+- When a state file is rewritten by the updater, keep it as JSON, never as generated TypeScript source
