@@ -83,6 +83,7 @@ const VIEW_FILTERS_KEY = 'etf-hub-view-filters';
 const COLUMN_FILTERS_KEY = 'etf-hub-column-filters';
 const COLUMN_TYPES_KEY = 'etf-hub-column-types';
 const SHOW_FILTERS_KEY = 'etf-hub-show-filters';
+const STICKY_RANK_KEY = 'etf-hub-sticky-rank';
 const FILTER_DEBOUNCE_MS = 250;
 const GITHUB_PAGES_ORIGIN = 'https://daggerok.github.io/';
 const BRAND_CONCURRENCY = 8; // parallel brand index requests at startup
@@ -115,7 +116,7 @@ const ASC_FIRST_KEYS = ['ticker', 'name', 'brand', 'category', 'dividendFrequenc
 
 // Hover explanations for table headers (native `title` tooltips).
 const COLUMN_TOOLTIPS: Record<string, string> = {
-  '#': 'Row index in current table view.',
+  '#': 'Row number in the current table view (1, 2, 3...). Turn on Sticky # to keep each row\'s rank in the sorted table when column filters hide rows.',
   Use: 'Use / Multi-ETF Selection - check this box to include this ETF\'s underlying holdings in the combined Watchlist tab. Funds of different brands mix freely.',
   Ticker: 'Ticker Symbol - unique stock market identifier. For holdings: the exchange ticker resolved by the issuing brand\'s feed. A dash means the position has no exchange ticker (bond, private debt); then the Identifier is the key.',
   Brand: 'Brand - the ETF issuer whose sibling repository publishes this fund\'s static feed.',
@@ -214,6 +215,8 @@ const el = {
   filtersSummary: byId('filters-summary'),
   filtersBadge: byId('filters-badge'),
   clearFiltersBtn: byId('clear-filters-btn'),
+  rankBtn: byId('rank-btn'),
+  rankSummary: byId('rank-summary'),
   staleToggle: byId('stale-toggle'),
   staleDays: byId('stale-days'),
   loadProgress: byId('load-progress'),
@@ -235,6 +238,7 @@ type AppState = {
   filters: Record<string, Record<string, string>>; // scope (catalog, watchlist, holdings, history, distributions) -> column key -> filter expression
   typeOverrides: Record<string, Record<string, ColType>>; // scope -> column key -> type chosen with the header badge
   showFilters: boolean;
+  stickyRank: boolean; // # = rank in the sorted table before the column filters (gaps when filters hide rows) instead of 1..N
   activeTab: ActiveTab;
   activeFundKey: string | null;
   queryByTab: Record<string, string>;
@@ -257,11 +261,12 @@ const state: AppState = {
   filters: {},
   typeOverrides: {},
   showFilters: true,
+  stickyRank: false,
   activeTab: 'All',
   activeFundKey: null,
   queryByTab: {},
-  sortKey: 'rank',
-  sortDir: 'asc',
+  sortKey: 'aumValue',
+  sortDir: 'desc',
   sortByTab: {},
   loading: true,
   loadDone: 0,
@@ -1190,6 +1195,7 @@ function rebuildNow(): void {
   rebuildDirty = false;
   store = buildStore();
   viewCache = null;
+  baselineCache = null;
   onStoreChanged();
 }
 
@@ -1571,6 +1577,7 @@ function renderStaticLoadSentinel(): void {
 type FundRef = { key: string; id: number; ticker: string; name: string; brand: string; raw: any };
 
 let viewCache: { sig: string; ids: number[] } | null = null;
+let baselineCache: { sig: string; ids: number[]; rank: Int32Array } | null = null;
 let blacklistVersion = 0;
 let filtersSig = '';
 let legacyCategory = ''; // single category saved by an older version, applied once the catalog is built
@@ -1754,6 +1761,7 @@ function activeCatalogFilters(): ActiveFilter[] {
   return list;
 }
 
+/** Ids that pass the top panel (brands, categories, blacklist, hide stale, search): the baseline of the sticky rank. */
 function filterCatalogIds(): number[] {
   if (!store) return [];
   const s = store;
@@ -1761,7 +1769,6 @@ function filterCatalogIds(): number[] {
   const terms = parseSearchTerms(catalogQuery());
   const catAllowed = state.hiddenCategories.size ? Uint8Array.from(s.categories, (name: string) => (state.hiddenCategories.has(name) ? 0 : 1)) : null;
   const staleCut = Date.now() - state.staleDays * DAY_MS;
-  const columnFilters = activeCatalogFilters();
   const out: number[] = [];
   for (let i = 0; i < s.n; i++) {
     if (!allowed[s.brandIdx[i]]) continue;
@@ -1776,18 +1783,20 @@ function filterCatalogIds(): number[] {
       }
       if (!ok) continue;
     }
-    if (columnFilters.length) {
-      let pass = true;
-      for (let f = 0; f < columnFilters.length; f++) {
-        const filter = columnFilters[f];
-        const numeric = filter.type !== 'string' && filter.col.kind !== 'text' && filter.col.kind !== 'basis';
-        if (!filter.test(numeric ? s.num[filter.col.key][i] : NaN, filter.type === 'string' ? catalogCellText(filter.col, i) : '')) { pass = false; break; }
-      }
-      if (!pass) continue;
-    }
     out.push(i);
   }
   return out;
+}
+
+function passesCatalogFilters(id: number, columnFilters: ActiveFilter[]): boolean {
+  const s = store;
+  if (!s) return false;
+  for (let f = 0; f < columnFilters.length; f++) {
+    const filter = columnFilters[f];
+    const numeric = filter.type !== 'string' && filter.col.kind !== 'text' && filter.col.kind !== 'basis';
+    if (!filter.test(numeric ? s.num[filter.col.key][id] : NaN, filter.type === 'string' ? catalogCellText(filter.col, id) : '')) return false;
+  }
+  return true;
 }
 
 /** Sort key -> Float64Array (numeric columns directly, text columns via cached ranks); NaN sorts last. */
@@ -1831,18 +1840,41 @@ function sortIds(ids: number[], key: string, dir: SortDirection): number[] {
   });
 }
 
-/** Filtered + sorted catalog ids, memoized on every input that affects them. */
+/**
+ * Sorted baseline of the sticky rank (top panel applied, column filters not), memoized as ONE entry:
+ * rank[id] = 1-based position of the fund in it (0 = not in the baseline).
+ */
+function catalogBaseline(): { ids: number[]; rank: Int32Array } {
+  const s = store;
+  if (!s) return { ids: [], rank: new Int32Array(0) };
+  const sig = [
+    s.version, hiddenBrandsSig(), blacklistVersion, hiddenCategoriesSig(), catalogQuery(),
+    state.hideStale ? state.staleDays : 'off', state.sortKey, state.sortDir,
+    state.hideStale ? Math.floor(Date.now() / DAY_MS) : '',
+  ].join('|');
+  if (baselineCache && baselineCache.sig === sig) return baselineCache;
+  const ids = sortIds(filterCatalogIds(), state.sortKey, state.sortDir);
+  const rank = new Int32Array(s.n);
+  for (let i = 0; i < ids.length; i++) rank[ids[i]] = i + 1;
+  baselineCache = { sig, ids, rank };
+  return baselineCache;
+}
+
+/** Filtered + sorted catalog ids: the column filters only drop ids from the sorted baseline (order kept, no re-sort). */
 function catalogIds(): number[] {
   if (!store) return [];
-  const sig = [
-    store.version, hiddenBrandsSig(), blacklistVersion, hiddenCategoriesSig(), catalogQuery(),
-    state.hideStale ? state.staleDays : 'off', state.sortKey, state.sortDir,
-    state.hideStale ? Math.floor(Date.now() / DAY_MS) : '', catalogFilterSig(),
-  ].join('|');
+  const base = catalogBaseline();
+  const sig = `${baselineCache ? baselineCache.sig : ''}|${catalogFilterSig()}`;
   if (viewCache && viewCache.sig === sig) return viewCache.ids;
-  const ids = sortIds(filterCatalogIds(), state.sortKey, state.sortDir);
+  const columnFilters = activeCatalogFilters();
+  const ids = columnFilters.length ? base.ids.filter(id => passesCatalogFilters(id, columnFilters)) : base.ids;
   viewCache = { sig, ids };
   return ids;
+}
+
+/** Number shown in the # column: the sticky rank (of the baseline catalogIds() just used), or the row number of the shown rows. */
+function catalogRowNumber(id: number, index: number): number {
+  return state.stickyRank && baselineCache ? baselineCache.rank[id] : index + 1;
 }
 
 function getTabs(): TabInfo[] {
@@ -1974,8 +2006,12 @@ function applyDefaultSortForTab(tab: ActiveTab): void {
   } else if (tab === 'detail:overview') {
     state.sortKey = 'section';
     state.sortDir = 'asc';
+  } else if (isEtfCatalogTab(tab)) {
+    // Load order means nothing in the catalog: largest funds first.
+    state.sortKey = 'aumValue';
+    state.sortDir = 'desc';
   } else {
-    // Catalog (ticker order), Holdings, History and Distributions keep source order by default.
+    // Holdings, History and Distributions keep source order by default.
     state.sortKey = 'rank';
     state.sortDir = 'asc';
   }
@@ -1983,7 +2019,8 @@ function applyDefaultSortForTab(tab: ActiveTab): void {
 
 function applySortForTab(tab: ActiveTab): void {
   const remembered = state.sortByTab[tab];
-  if (remembered) {
+  // a stored catalog sort on a column that no longer exists falls back to the default
+  if (remembered && (!isEtfCatalogTab(tab) || CATALOG_COLUMNS.some(col => col.key === remembered.key))) {
     state.sortKey = remembered.key;
     state.sortDir = remembered.dir;
     return;
@@ -2926,8 +2963,10 @@ function filterRowHtml(scope: string, cells: FilterCell[], leading: string): str
   }).join('')}</tr>`;
 }
 
+const STICKY_RANK_TIP = 'Sticky rank: the position of the row in the table sorted by the current column, before the column filters. Column filters only hide rows, so the numbers keep gaps (1, 4, 7...); the sort, the search and the top panel (brands, categories, blacklist, hide stale) rank again. Sticky # off: 1..N of the shown rows.';
+
 function indexHeader(): string {
-  return `<th class="py-3.5 px-4 w-12 text-center" title="${escapeHtml(getHeaderTooltip('#'))}">#</th>`;
+  return `<th class="py-3.5 px-4 w-12 text-center" title="${escapeHtml(state.stickyRank && currentFilterScope() ? STICKY_RANK_TIP : getHeaderTooltip('#'))}">#</th>`;
 }
 
 function useHeader(): string {
@@ -3038,7 +3077,7 @@ function fundRowHtml(id: number, index: number): string {
   const asOf = metrics.performanceAsOf || '';
   return `
         <tr data-key="${escapeHtml(key)}" class="hover:bg-slate-50 dark:hover:bg-slate-700/30 transition border-b border-slate-100 dark:border-slate-700/30 ${selected ? 'selected-row' : ''}">
-          <td class="py-2.5 px-4 text-slate-400 dark:text-slate-500 text-xs text-center font-mono">${index + 1}</td>
+          <td class="py-2.5 px-4 text-slate-400 dark:text-slate-500 text-xs text-center font-mono">${catalogRowNumber(id, index)}</td>
           <td class="catalog-sticky-col catalog-sticky-use py-2.5 px-4 text-center">
             <div class="inline-flex items-center justify-center gap-1.5">
               <input data-checkbox="${escapeHtml(key)}" type="checkbox" ${selected ? 'checked' : ''} class="w-4 h-4 accent-blue-600 cursor-pointer" aria-label="Use ${escapeHtml(s.ticker[id])}" />
@@ -3146,7 +3185,8 @@ function renderFundsTable(): void {
 
   const selected = selectedKeys().length;
   const queryText = catalogQuery() ? ` matching “${catalogQuery()}”` : '';
-  setStatus(`Showing ${ids.length} ETF${ids.length === 1 ? '' : 's'}${queryText}.${selected ? ` ${selected} selected.` : ' No ETFs selected yet.'}`, selected ? 'success' : 'info');
+  const rankText = state.stickyRank && ids.length ? ` # = rank among ${catalogBaseline().ids.length.toLocaleString('en-US')} before the column filters.` : '';
+  setStatus(`Showing ${ids.length} ETF${ids.length === 1 ? '' : 's'}${queryText}.${selected ? ` ${selected} selected.` : ' No ETFs selected yet.'}${rankText}`, selected ? 'success' : 'info');
   el.tickerCount.textContent = `${ids.length.toLocaleString('en-US')} ETFs`;
   renderSubtitle();
 }
@@ -3182,9 +3222,9 @@ function sheetCols(headers: string[], numericHeaders: string[]): GridCol[] {
   });
 }
 
-/** Detects the column types from the rows (`cells` = display strings), applies the filters of the scope and remembers the types for the header. */
-function applyGridFilters(scope: string, cols: GridCol[], rows: any[]): any[] {
-  const sample = rows.slice(0, 200);
+/** Detects the column types from `source` (`cells` = display strings), applies the filters of the scope to `rows` (order kept) and remembers the types for the header. */
+function applyGridFilters(scope: string, cols: GridCol[], rows: any[], source: any[] = rows): any[] {
+  const sample = source.slice(0, 200);
   const detected = cols.map((col, i) => detectColType(sample.map(row => String(row.cells[i] ?? ''))));
   const types = cols.map((col, i) => typeOverrideFor(scope, col.fkey) || detected[i]);
   gridTypeCache[scope] = { keys: cols.map(col => col.fkey), types, detected };
@@ -3200,6 +3240,29 @@ function applyGridFilters(scope: string, cols: GridCol[], rows: any[]): any[] {
     const cell = String(row.cells[filter.index] ?? '');
     return filter.type === 'string' ? filter.test(NaN, cell.toLowerCase()) : filter.test(parseCellValue(cell, filter.type), '');
   }));
+}
+
+/** ONE cached baseline of the shown grid table: its rows after the search, sorted, before the column filters, with the rank of each row. */
+let gridBaselineCache: { sig: string; source: unknown[]; all: any[]; rows: any[]; rank: Map<any, number> } | null = null;
+
+/** Rows of a grid table as shown: the sorted baseline is rebuilt only when the data, search or sort change; the column filters then only drop rows from it. */
+function gridView(scope: string, cols: GridCol[], source: unknown[], build: () => any[]): any[] {
+  const sig = [scope, state.sortKey, state.sortDir, currentQuery(), source.length].join('|');
+  let cache = gridBaselineCache;
+  if (!cache || cache.sig !== sig || cache.source !== source) {
+    const all = build();
+    const rows = sortRows(filterRows(all));
+    const rank = new Map<any, number>();
+    rows.forEach((row, index) => rank.set(row, index + 1));
+    cache = gridBaselineCache = { sig, source, all, rows, rank };
+  }
+  return applyGridFilters(scope, cols, cache.rows, cache.all);
+}
+
+/** Number shown in the # column of a grid row: the sticky rank, or the row number of the shown rows. */
+function gridRowNumber(row: any, index: number): number {
+  const rank = state.stickyRank && gridBaselineCache ? gridBaselineCache.rank.get(row) : undefined;
+  return rank === undefined ? index + 1 : rank;
 }
 
 /** Header row (sort buttons + type badges) and, when shown, the filter row of a grid table. */
@@ -3237,6 +3300,10 @@ function renderFilterControls(): void {
   el.filtersBadge.hidden = count === 0;
   el.filtersBadge.textContent = String(count);
   el.clearFiltersBtn.hidden = count === 0;
+  el.rankBtn.disabled = !scope; // the overview has no column filters: its # is always 1..N
+  el.rankBtn.setAttribute('aria-pressed', String(state.stickyRank));
+  el.rankBtn.classList.toggle('is-filtered', state.stickyRank && Boolean(scope));
+  el.rankSummary.textContent = state.stickyRank ? 'on' : 'off';
 }
 
 /** The second header row sticks right below the first one: tell the CSS how tall the first row is. */
@@ -3449,7 +3516,8 @@ function getDedupedWatchlistRows(): WatchlistRow[] {
 }
 
 function getVisibleWatchlistRows(): WatchlistRow[] {
-  return sortRows(filterRows(applyGridFilters('watchlist', WATCHLIST_COLS, getDedupedWatchlistRows())));
+  const rows = getDedupedWatchlistRows();
+  return gridView('watchlist', WATCHLIST_COLS, rows, () => rows);
 }
 
 function watchlistChunkSignature(rows: WatchlistRow[]): string {
@@ -3495,7 +3563,7 @@ function renderWatchlistTable(): void {
   } else {
     let html = visibleRows.map((row, index) => `
       <tr class="hover:bg-slate-50 dark:hover:bg-slate-700/30 transition border-b border-slate-100 dark:border-slate-700/30">
-        <td class="py-2.5 px-4 text-slate-400 dark:text-slate-500 text-xs text-center font-mono">${index + 1}</td>
+        <td class="py-2.5 px-4 text-slate-400 dark:text-slate-500 text-xs text-center font-mono">${gridRowNumber(row, index)}</td>
         <td class="watchlist-sticky-col watchlist-sticky-ticker py-2.5 px-4 font-mono font-semibold text-blue-600 dark:text-blue-400">${escapeHtml(row.symbol)}</td>
         <td class="py-2.5 px-4 text-slate-700 dark:text-slate-300 font-medium" title="${escapeHtml(row.name)}">${escapeHtml(row.name || DASH)}</td>
         <td class="py-2.5 px-4 text-slate-700 dark:text-slate-300">
@@ -3519,7 +3587,8 @@ function renderWatchlistTable(): void {
   }
 
   const queryText = currentQuery() ? ` matching “${currentQuery()}”` : '';
-  setStatus(`Watchlist built from ${selectedCount} selected ETF${selectedCount === 1 ? '' : 's'}: ${rows.length} ticker${rows.length === 1 ? '' : 's'}${queryText}. Deduplicated by ticker, or by identifier for bond rows.`, 'success');
+  const rankText = state.stickyRank && rows.length && gridBaselineCache ? ` # = rank among ${gridBaselineCache.rows.length} before the column filters.` : '';
+  setStatus(`Watchlist built from ${selectedCount} selected ETF${selectedCount === 1 ? '' : 's'}: ${rows.length} ticker${rows.length === 1 ? '' : 's'}${queryText}. Deduplicated by ticker, or by identifier for bond rows.${rankText}`, 'success');
   el.tickerCount.textContent = `${rows.length} tickers`;
   renderSubtitle();
 }
@@ -3546,12 +3615,11 @@ function renderEmptyDetail(message: string): void {
 
 /** Filtered + sorted view of a sheet exactly as the table shows it (also used by the exports). */
 function sheetView(headers: string[], sourceRows: string[][], scope: string, numericHeaders: string[] = []): any[] {
-  const rows = sourceRows.map((row, sourceIndex) => {
+  return gridView(scope, sheetCols(headers, numericHeaders), sourceRows, () => sourceRows.map((row, sourceIndex) => {
     const cells: Record<string, unknown> = { values: row, cells: headers.map((header, index) => String(row[index] ?? '')), searchIndex: row.join(' ').toLowerCase(), rank: sourceIndex };
     headers.forEach((header, index) => { cells[`col${index}`] = row[index] ?? ''; });
     return cells;
-  });
-  return sortRows(filterRows(applyGridFilters(scope, sheetCols(headers, numericHeaders), rows)));
+  }));
 }
 
 /** Overview rows exactly as the table shows them (filtered + sorted). */
@@ -3604,7 +3672,7 @@ function renderSheetTable(fund: FundRef, sheet: 'holdings' | 'history'): void {
       const values: string[] = row.values || [];
       return `
       <tr class="hover:bg-slate-50 dark:hover:bg-slate-700/30 transition border-b border-slate-100 dark:border-slate-700/30">
-        <td class="py-2.5 px-4 text-slate-400 dark:text-slate-500 text-xs text-center font-mono">${index + 1}</td>
+        <td class="py-2.5 px-4 text-slate-400 dark:text-slate-500 text-xs text-center font-mono">${gridRowNumber(row, index)}</td>
         ${values.map((cell, columnIndex) => `
           <td class="py-2.5 px-4 ${NUMERIC_SHEET_HEADERS.includes(headers[columnIndex]) ? 'text-right font-mono text-slate-700 dark:text-slate-300' : 'text-slate-700 dark:text-slate-300'}">${escapeHtml(cell === '' ? DASH : cell)}</td>
         `).join('')}
@@ -3745,7 +3813,7 @@ function renderDistributionsTable(fund: FundRef): void {
       const values: string[] = row.values || [];
       return `
       <tr class="hover:bg-slate-50 dark:hover:bg-slate-700/30 transition border-b border-slate-100 dark:border-slate-700/30">
-        <td class="py-2.5 px-4 text-slate-400 dark:text-slate-500 text-xs text-center font-mono">${index + 1}</td>
+        <td class="py-2.5 px-4 text-slate-400 dark:text-slate-500 text-xs text-center font-mono">${gridRowNumber(row, index)}</td>
         ${values.map(cell => `<td class="py-2.5 px-4 text-slate-700 dark:text-slate-300 font-mono">${escapeHtml(cell || DASH)}</td>`).join('')}
       </tr>
     `;}).join('');
@@ -4017,20 +4085,21 @@ function syncBlacklistPanelHeight(): void {
 // 10. Actions & exports (CSV, TXT, Copy Tickers)
 // =========================================================================
 
-/** Rows are exactly the visible (filtered + sorted) table rows; `warning` is set when they are not the whole data. */
+/** Rows are exactly the visible (filtered + sorted) table rows, led by the # the table shows; `warning` is set when they are not the whole data. */
 function currentExportRows(): { headers: string[]; rows: string[][]; scope: string; warning?: string } {
   if (state.activeTab === 'watchlist') {
     const loading = selectedKeys().some(key => !holdingsComplete.has(key));
     return {
       warning: loading ? 'Holdings of some selected ETFs are still loading or failed to load, so the Watchlist is incomplete. Export it anyway?' : undefined,
-      headers: ['Ticker', 'Name', 'ETFs', '# ETFs', 'Weight Sum (%)', 'Max Weight (%)', 'Identifiers'],
-      rows: getVisibleWatchlistRows().map(row => [
+      headers: ['#', 'Ticker', 'Name', 'ETFs', '# ETFs', 'Weight Sum (%)', 'Max Weight (%)', 'Identifiers'],
+      rows: getVisibleWatchlistRows().map((row, index) => [
+        String(gridRowNumber(row, index)),
         row.symbol,
         row.name,
         row.funds.map(keyTicker).join('|'),
         String(row.fundCount),
-        row.weightSum.toFixed(6),
-        row.maxWeight.toFixed(6),
+        row.weightSum === null ? '' : row.weightSum.toFixed(6), // unpublished weight: empty, never a crash
+        row.maxWeight === null ? '' : row.maxWeight.toFixed(6),
         row.cusips.join('|'),
       ]),
       scope: 'watchlist',
@@ -4041,8 +4110,8 @@ function currentExportRows(): { headers: string[]; rows: string[][]; scope: stri
     const fund = getActiveFund();
     const rows = fund ? overviewView(fund) : [];
     return {
-      headers: ['Section', 'Metric', 'Value'],
-      rows: rows.map(row => [row.section, row.metric, row.value === DASH ? '' : String(row.value ?? '')]),
+      headers: ['#', 'Section', 'Metric', 'Value'],
+      rows: rows.map((row, index) => [String(index + 1), row.section, row.metric, row.value === DASH ? '' : String(row.value ?? '')]),
       scope: fund ? `${fund.ticker}-overview` : 'overview',
     };
   }
@@ -4053,8 +4122,8 @@ function currentExportRows(): { headers: string[]; rows: string[][]; scope: stri
     const worksheet = meta && meta.distributions ? meta.distributions : { headers: [], rows: [] };
     const dHeaders: string[] = Array.isArray(worksheet.headers) ? worksheet.headers : [];
     return {
-      headers: dHeaders,
-      rows: sheetView(dHeaders, Array.isArray(worksheet.rows) ? worksheet.rows : [], 'distributions').map((row: any) => row.values),
+      headers: ['#', ...dHeaders],
+      rows: sheetView(dHeaders, Array.isArray(worksheet.rows) ? worksheet.rows : [], 'distributions').map((row: any, index: number) => [String(gridRowNumber(row, index)), ...row.values]),
       scope: fund ? `${fund.ticker}-distributions` : 'distributions',
     };
   }
@@ -4066,8 +4135,8 @@ function currentExportRows(): { headers: string[]; rows: string[][]; scope: stri
     if (entry) {
       const partial = entry.nextPage < entry.manifest.pages.length;
       return {
-        headers: entry.headers,
-        rows: sheetView(entry.headers, entry.rows, sheet, sheet === 'holdings' || sheet === 'history' ? NUMERIC_SHEET_HEADERS : []).map((row: any) => row.values),
+        headers: ['#', ...entry.headers],
+        rows: sheetView(entry.headers, entry.rows, sheet, sheet === 'holdings' || sheet === 'history' ? NUMERIC_SHEET_HEADERS : []).map((row: any, index: number) => [String(gridRowNumber(row, index)), ...row.values]),
         scope: fund ? `${fund.ticker}-${sheet}` : sheet,
         warning: partial ? `Only ${entry.rows.length.toLocaleString('en-US')} of ${(entry.manifest.totalRows || 0).toLocaleString('en-US')} rows are loaded (scroll the table to load more). Export the loaded rows only?` : undefined,
       };
@@ -4079,11 +4148,12 @@ function currentExportRows(): { headers: string[]; rows: string[][]; scope: stri
   const ids = catalogIds();
   const cell = (name: string, id: number): string => (s ? numberCell(nanToNull(s.num[name][id])) : '');
   return {
-    headers: ['Selected', 'Ticker', 'Brand', 'Fund Name', 'Type', 'NAV', 'Net Assets ($)', 'Expense (%)', 'Dividend Yield (%)', 'SEC Yield (%)', 'Yield Basis', 'Frequency', 'YTD Return (%)', 'TR 1Y (%)', 'TR 3Y (%)', 'TR 5Y (%)', 'TR 10Y (%)', 'CAGR 3Y (%)', 'CAGR 5Y (%)', 'CAGR 10Y (%)', 'SI Ann. (%)', 'Returns Source', 'Return As Of', 'Inception', 'Holdings', 'History', 'As Of'],
-    rows: s ? ids.map(id => {
+    headers: ['#', 'Selected', 'Ticker', 'Brand', 'Fund Name', 'Type', 'NAV', 'Net Assets ($)', 'Expense (%)', 'Dividend Yield (%)', 'SEC Yield (%)', 'Yield Basis', 'Frequency', 'YTD Return (%)', 'TR 1Y (%)', 'TR 3Y (%)', 'TR 5Y (%)', 'TR 10Y (%)', 'CAGR 3Y (%)', 'CAGR 5Y (%)', 'CAGR 10Y (%)', 'SI Ann. (%)', 'Returns Source', 'Return As Of', 'Inception', 'Holdings', 'History', 'As Of'],
+    rows: s ? ids.map((id, index) => {
       const raw = s.raw[id];
       const metrics = raw.metrics || {};
       return [
+        String(catalogRowNumber(id, index)),
         state.selected.has(s.keys[id]) ? 'yes' : 'no',
         s.ticker[id],
         s.brandText[id],
@@ -4296,6 +4366,7 @@ function restoreColumnFilters(): void {
   }
   state.typeOverrides = overrides;
   state.showFilters = lsGet(SHOW_FILTERS_KEY) !== 'false';
+  state.stickyRank = lsGet(STICKY_RANK_KEY) === 'true'; // off unless chosen: anything else stored reads as off
 }
 
 function restoreSiteState(): string | null {
@@ -4358,6 +4429,11 @@ function bindEvents(): void {
   el.filtersBtn.addEventListener('click', () => {
     state.showFilters = !state.showFilters;
     lsSet(SHOW_FILTERS_KEY, String(state.showFilters));
+    render();
+  });
+  el.rankBtn.addEventListener('click', () => {
+    state.stickyRank = !state.stickyRank;
+    lsSet(STICKY_RANK_KEY, String(state.stickyRank));
     render();
   });
   el.clearFiltersBtn.addEventListener('click', () => {
