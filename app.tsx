@@ -110,8 +110,8 @@ const NUMERIC_SHEET_HEADERS = ['Weight', 'Weight (%)', 'Market Weight', 'Shares 
 // plus a few top level numbers. NaN means unavailable (always sorts last).
 const METRIC_KEYS = ['ytd', 'tr1y', 'tr3y', 'tr5y', 'tr10y', 'cagr3y', 'cagr5y', 'cagr10y', 'siAnn', 'dividendYield', 'secYield'];
 const FUND_NUM_KEYS = ['aumValue', 'terValue', 'terGrossValue', 'navValue'];
-const STRING_SORT_KEYS = ['ticker', 'name', 'brand', 'category', 'dividendFrequency'];
-const ASC_FIRST_KEYS = ['ticker', 'name', 'brand', 'category', 'dividendFrequency', 'symbol', 'section', 'metric', 'identifier', 'label'];
+const STRING_SORT_KEYS = ['ticker', 'name', 'brand', 'category', 'dividendFrequency', 'yieldBasis'];
+const ASC_FIRST_KEYS = ['ticker', 'name', 'brand', 'category', 'dividendFrequency', 'yieldBasis', 'symbol', 'section', 'metric', 'identifier', 'label'];
 
 // Hover explanations for table headers (native `title` tooltips).
 const COLUMN_TOOLTIPS: Record<string, string> = {
@@ -135,6 +135,7 @@ const COLUMN_TOOLTIPS: Record<string, string> = {
   ETFs: 'Selected ETFs holding this security.',
   'Dividend Yield': 'Dividend Yield - as published by the brand feed (trailing 12-month yield or the indicated rate from the latest distribution), in %.',
   'SEC Yield': 'SEC Yield (30-Day) - the 30-day SEC yield when the issuer publishes one; a dash otherwise.',
+  'Yield Basis': 'Yield Basis (metrics.dividendYieldBasis) - which definition stands behind the Dividend Yield: 12M official trailing 12-month yield, DIST official distribution rate, OFFC official yield (other definition), CALC computed trailing 12-month, IND indicated (latest distribution x payments per year / NAV). A dash means the feed does not carry the basis yet. Hover a badge for the full text.',
   Frequency: 'Frequency - sortable payment cadence from the published distribution schedule: 01 - Monthly, 04 - Quarterly, 06 - Semi-annually, 12 - Annually; 00 denotes unavailable and 99 irregular.',
   'YTD Return': 'YTD Return - total return since the start of the year. Source and as-of date differ per brand: see the Source badge and Return As Of.',
   'TR 1Y': 'TR 1Y (1-Year Total Return) - cumulative total return over the past year, including reinvested distributions. Official NAV return when the issuer publishes one, otherwise derived or estimated (see Source).',
@@ -292,6 +293,7 @@ type Store = {
   brandText: string[];
   categoryText: string[];
   freqText: string[];
+  yieldBasis: string[]; // metrics.dividendYieldBasis code per row, '' when the feed has none (or an unknown code)
   fields: Record<SearchField, string[]>; // lower-cased text per searchable field (field:value syntax)
   keyIndex: Map<string, number>;
   tickerIndex: Map<string, number[]>;
@@ -1105,6 +1107,7 @@ function buildStore(): Store {
     brandText: new Array(n),
     categoryText: new Array(n),
     freqText: new Array(n),
+    yieldBasis: new Array(n),
     fields: { ticker: new Array(n), name: new Array(n), brand: new Array(n), category: new Array(n), basis: new Array(n), exchange: new Array(n) },
     keyIndex: new Map(),
     tickerIndex: new Map(),
@@ -1132,6 +1135,7 @@ function buildStore(): Store {
     result.brandText[i] = brand.brand;
     result.categoryText[i] = category;
     result.freqText[i] = frequencyOf(fund);
+    result.yieldBasis[i] = yieldBasisCode(metrics.dividendYieldBasis);
     for (let k = 0; k < METRIC_KEYS.length; k++) {
       const value = numberOrNull(metrics[METRIC_KEYS[k]]);
       if (value !== null) num[METRIC_KEYS[k]][i] = value;
@@ -1640,6 +1644,7 @@ const CATALOG_COLUMNS: CatalogColumn[] = [
   { key: 'terValue', label: 'Expense', kind: 'num', fmt: 'ter' },
   { key: 'dividendYield', label: 'Dividend Yield', kind: 'num', fmt: 'pct' },
   { key: 'secYield', label: 'SEC Yield', kind: 'num', fmt: 'pct' },
+  { key: 'yieldBasis', label: 'Yield Basis', kind: 'text', fmt: 'text' },
   { key: 'dividendFrequency', label: 'Frequency', kind: 'text', fmt: 'text' },
   { key: 'ytd', label: 'YTD Return', kind: 'num', fmt: 'pct' },
   { key: 'tr1y', label: 'TR 1Y', kind: 'num', fmt: 'pct' },
@@ -1679,7 +1684,7 @@ function catalogCellText(col: CatalogColumn, id: number): string {
   let text = '';
   if (col.kind === 'basis') text = BASIS_BADGES[Number.isFinite(s.basisCls[id]) ? String(s.basisCls[id]) : 'none'].label;
   else if (col.kind === 'date') text = String(col.key === 'perfTs' ? metrics.performanceAsOf || '' : col.key === 'inceptionTs' ? raw.inceptionDate || '' : raw.asOfDate || '');
-  else if (col.kind === 'text') text = col.key === 'ticker' ? s.ticker[id] : col.key === 'brand' ? s.brandText[id] : col.key === 'name' ? s.name[id] : col.key === 'category' ? s.categoryText[id] : s.freqText[id];
+  else if (col.kind === 'text') text = col.key === 'ticker' ? s.ticker[id] : col.key === 'brand' ? s.brandText[id] : col.key === 'name' ? s.name[id] : col.key === 'category' ? s.categoryText[id] : col.key === 'yieldBasis' ? yieldBasisLabel(s.yieldBasis[id]) : s.freqText[id];
   else if (col.fmt === 'nav') text = String(raw.nav || '');
   else if (col.fmt === 'ter') text = terText(id);
   else {
@@ -1791,7 +1796,7 @@ function sortArrayFor(key: string): Float64Array | null {
   if (!STRING_SORT_KEYS.includes(key)) return null;
   const cached = s.rankCache[key];
   if (cached) return cached;
-  const texts = key === 'ticker' ? s.ticker : key === 'name' ? s.name : key === 'brand' ? s.brandText : key === 'category' ? s.categoryText : s.freqText;
+  const texts = key === 'yieldBasis' ? s.yieldBasis.map(yieldBasisLabel) : key === 'ticker' ? s.ticker : key === 'name' ? s.name : key === 'brand' ? s.brandText : key === 'category' ? s.categoryText : s.freqText;
   const order = Array.from({ length: s.n }, (_, i) => i).sort((a, b) => collator.compare(texts[a], texts[b]) || a - b);
   const ranks = new Float64Array(s.n).fill(NaN);
   let rank = -1;
@@ -2777,6 +2782,47 @@ const BASIS_BADGES: Record<string, { label: string; cls: string }> = {
   none: { label: 'n/a', cls: 'src-none' },
 };
 
+/**
+ * metrics.dividendYieldBasis: which definition stands behind dividendYield. A missing key (feeds not
+ * refreshed yet) or an unknown code is "unknown": it never throws and is shown as a dash.
+ */
+const YIELD_BASES: Record<string, { badge: string; cls: string; label: string }> = {
+  'official-trailing-12m': { badge: '12M', cls: 'src-official', label: 'Official trailing 12-month yield' },
+  'official-distribution-rate': { badge: 'DIST', cls: 'src-official', label: 'Official distribution rate (latest distribution annualized / NAV)' },
+  'official-other': { badge: 'OFFC', cls: 'src-official', label: 'Official yield (other definition)' },
+  'computed-trailing-12m': { badge: 'CALC', cls: 'src-mixed', label: 'Computed trailing 12-month' },
+  indicated: { badge: 'IND', cls: 'src-estimate', label: 'Indicated (latest distribution x payments per year / NAV)' },
+};
+const YIELD_BASIS_MISSING = 'Basis not in the feed yet';
+
+function yieldBasisCode(value: unknown): string {
+  const code = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  return Object.prototype.hasOwnProperty.call(YIELD_BASES, code) ? code : '';
+}
+
+/** Human label of a basis code, '' when unknown (filters, sorting and exports use the label). */
+function yieldBasisLabel(code: string): string {
+  return code ? YIELD_BASES[code].label : '';
+}
+
+function yieldBasisTip(id: number): string {
+  return store ? yieldBasisLabel(store.yieldBasis[id]) || YIELD_BASIS_MISSING : YIELD_BASIS_MISSING;
+}
+
+function yieldCell(id: number): string {
+  const s = store;
+  if (!s) return '';
+  return `<td class="py-2.5 px-4 text-right font-mono text-slate-700 dark:text-slate-300" title="${escapeHtml(yieldBasisTip(id))}">${formatPercent(s.num.dividendYield[id])}</td>`;
+}
+
+function yieldBasisCell(id: number): string {
+  const s = store;
+  if (!s) return '';
+  const code = s.yieldBasis[id];
+  const badge = code ? `<span class="src-badge ${YIELD_BASES[code].cls}">${YIELD_BASES[code].badge}</span>` : `<span class="text-slate-400 dark:text-slate-500">${DASH}</span>`;
+  return `<td class="py-2.5 px-4" title="${escapeHtml(yieldBasisTip(id))}">${badge}</td>`;
+}
+
 function sourceBadge(id: number): string {
   if (!store) return '';
   const cls = store.basisCls[id];
@@ -2814,8 +2860,9 @@ function fundRowHtml(id: number, index: number): string {
           <td class="${numCls}">${escapeHtml(raw.nav || DASH)}</td>
           <td class="${numCls}">${formatMoney(num.aumValue[id])}</td>
           ${terCell(id)}
-          ${pct('dividendYield')}
+          ${yieldCell(id)}
           ${pct('secYield')}
+          ${yieldBasisCell(id)}
           <td class="py-2.5 px-4 text-slate-700 dark:text-slate-300">${escapeHtml(s.freqText[id] || DASH)}</td>
           ${pct('ytd')}
           ${pct('tr1y')}
@@ -2846,7 +2893,7 @@ function terCell(id: number): string {
   return `<td class="py-2.5 px-4 text-right font-mono text-slate-700 dark:text-slate-300"${tip}>${escapeHtml(text)}</td>`;
 }
 
-const CATALOG_COLSPAN = 27;
+const CATALOG_COLSPAN = 28;
 
 function catalogMoreRowHtml(remaining: number): string {
   return `<tr id="catalog-more-row" class="cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-700/30 transition"><td colspan="${CATALOG_COLSPAN}" class="py-3 text-center text-xs text-slate-400 dark:text-slate-500">Scroll or click to load more rows… (${remaining.toLocaleString('en-US')} remaining)</td></tr>`;
@@ -3840,7 +3887,7 @@ function currentExportRows(): { headers: string[]; rows: string[][]; scope: stri
   const ids = catalogIds();
   const cell = (name: string, id: number): string => (s ? numberCell(nanToNull(s.num[name][id])) : '');
   return {
-    headers: ['Selected', 'Ticker', 'Brand', 'Fund Name', 'Type', 'NAV', 'Net Assets ($)', 'Expense (%)', 'Dividend Yield (%)', 'SEC Yield (%)', 'Frequency', 'YTD Return (%)', 'TR 1Y (%)', 'TR 3Y (%)', 'TR 5Y (%)', 'TR 10Y (%)', 'CAGR 3Y (%)', 'CAGR 5Y (%)', 'CAGR 10Y (%)', 'SI Ann. (%)', 'Returns Source', 'Return As Of', 'Inception', 'Holdings', 'History', 'As Of'],
+    headers: ['Selected', 'Ticker', 'Brand', 'Fund Name', 'Type', 'NAV', 'Net Assets ($)', 'Expense (%)', 'Dividend Yield (%)', 'SEC Yield (%)', 'Yield Basis', 'Frequency', 'YTD Return (%)', 'TR 1Y (%)', 'TR 3Y (%)', 'TR 5Y (%)', 'TR 10Y (%)', 'CAGR 3Y (%)', 'CAGR 5Y (%)', 'CAGR 10Y (%)', 'SI Ann. (%)', 'Returns Source', 'Return As Of', 'Inception', 'Holdings', 'History', 'As Of'],
     rows: s ? ids.map(id => {
       const raw = s.raw[id];
       const metrics = raw.metrics || {};
@@ -3855,6 +3902,7 @@ function currentExportRows(): { headers: string[]; rows: string[][]; scope: stri
         cell('terValue', id),
         cell('dividendYield', id),
         cell('secYield', id),
+        yieldBasisLabel(s.yieldBasis[id]),
         s.freqText[id] || '',
         cell('ytd', id),
         cell('tr1y', id),
