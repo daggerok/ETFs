@@ -55,18 +55,20 @@ How it works:
 - Source badge: each row shows `metrics.returnsBasis` as a badge (`NAV` official, `mixed` official with derived gaps, `derived` computed from price or NAV history, `n/a`) and `performanceAsOf` as Return As Of
 - Watchlist: Use checkboxes (persisted in `localStorage` per brand and ticker) select funds across brands; their holdings pages are loaded on demand from each fund's own brand base and aggregated by ticker (CUSIP, ISIN, identifier or name when a position has no ticker); detail tabs (Overview, Holdings, History, Distributions) load on demand the same way
 
-### Column filters
+### Column types and filters
 
-Every sortable column header of All ETFs, Watchlist and the Holdings, History and Distributions tabs has a funnel button that opens a filter popover (a bottom sheet on phones). The funnel turns blue while the column is filtered, active filters appear as chips above the table (click a chip to edit it, the x removes it, `Clear all filters` removes every column filter of the tab) together with the row counts (`2,543 -> 312 ETFs`), and everything is kept in `localStorage` (`etf-hub-column-filters`) and restored on load. Column filters combine with each other, the search box, the brand and category dropdowns, the stale toggle and the blacklist by AND, sorting and selection keep working, and the CSV and TXT exports contain exactly the filtered rows. `Use` and `#` have no filter.
+Every column of the ETF catalog and of the Watchlist, Holdings, History and Distributions tabs has a type: text (`ABC`), number (`123`), percentage (`%`), money (`$`), date (`D`), date and time (`DT`) or time of day (`T`). The type is detected from the texts the column shows (80% of the filled cells must agree, otherwise text) and is written in the badge next to the column title: click it to cycle the type, Shift+click to return to auto-detection. Dates are read as `2024-06-15`, `6/15/2024`, `15.06.2024`, `Jun 15, 2024` or `15-Jun-2024`, date and time as `2024-06-15T09:30:00Z` or `2024-06-15 09:30`, time as `09:30`, `16:00:00` or `9:30 PM`
 
-- Types: each column is a string, number, percent, date, datetime or time. The catalog columns take their type from column metadata checked against the values (a date column that holds times becomes datetime); the detail sheets are detected from up to 400 non-empty values, where 80% must match a type (otherwise the column stays text), fixed-width digit-only identifiers and values with leading zeros stay text, and placeholders such as `-` and `N/A` are ignored
-- Text: contains, does not contain, equals, does not equal, starts with, ends with, matches regex (case-insensitive; an invalid pattern is flagged and ignored), is empty, is not empty; columns with at most 200 distinct values (brand, type, frequency, source and similar) also get a searchable multi-select of values with counts
-- Numbers and percents: `=`, `!=`, `>`, `>=`, `<`, `<=`, between, is empty, is not empty; numbers accept `1,234.5` and the suffixes k, m, b, t (`1.5b`)
-- Dates and datetimes: on, before, after, on or before, on or after, between, in the last N days (presets 7d, 30d, 90d, 1y), older than N days, is empty, is not empty; a date compares by day and a value with a time by the minute (or second). Date columns are UTC calendar dates. Times (`HH:mm[:ss]`, 12-hour input accepted) use at, before, after, at or before, at or after, between
-- Several conditions per column combine with all (AND) or any (OR), up to 5, and with the picked values by AND
-- Empty values never match a comparison, including `!=`; only `is empty` matches them
-- Percent columns hold percent numbers: type `12.5` or `12.5%` (both mean 12.5%); a fraction such as `0.125` is not converted to 12.5%. Values are compared at full precision, not as displayed with two decimals
-- Performance: filters compile once per change into closures over the typed arrays (dictionary columns are evaluated once per distinct value), so no per-row allocation happens
+A row of filter inputs sits under the column headers (the `Column filters` button hides it, `Clear filters` empties it). Filters of different columns are combined with AND, the search box, the Brands and Categories dropdowns, the stale toggle and the blacklist apply on top, and Copy Tickers, the CSV and TXT exports and the `Use` select-all checkbox follow the filtered rows. Filters and type overrides are remembered in the browser (`etf-hub-column-filters`, `etf-hub-column-types`, `etf-hub-show-filters`); the Holdings, History and Distributions filters are keyed by the column title, because the sheets differ between brands
+
+Inside one filter: a space means AND, a comma means OR, a leading `!` means NOT, `?` matches an empty or unavailable value and `!?` a value that is there; a value that is unavailable matches only `?` and negated conditions. An unquoted space ends the value, so quote values that contain one (`>="2024-06-15 09:30"`)
+
+| Type | Examples |
+| --- | --- |
+| Text | `bank` contains, `"two words"`, `!bank`, `=exact`, `^starts`, `ends$`, `/regex/`, `tech, health` |
+| Number, percentage, money | `>10`, `>=10 <50`, `=22` (matches what rounds to 22), `!=22`, `10..50`, `..50`, `10..`, `>1B` and `K` `M` `B` `T` suffixes, an optional `$` or `%` |
+| Date, date and time | `>2024-06-01`, `2024` (the whole year), `2024-06` (the whole month), `2024-01..2024-06`, `today`, `yesterday`, `-7d..` (the last 7 days), `+2w`, `-3m`, `-1y` |
+| Time | `>09:30`, `09:30..16:00`, `=12:00` (the whole minute) |
 
 ### Metrics and caveats
 
