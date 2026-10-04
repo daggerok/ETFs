@@ -1,0 +1,57 @@
+const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+const base = process.argv[2];
+const proc = Bun.spawn([CHROME, '--headless=new', '--remote-debugging-port=9341', '--window-size=1500,900', '--no-first-run', '--user-data-dir=/tmp/cdp-ui-' + Date.now(), 'about:blank'], { stdout: 'ignore', stderr: 'ignore' });
+let wsUrl = '';
+for (let i = 0; i < 50 && !wsUrl; i++) { await Bun.sleep(200); try { const t = await (await fetch('http://localhost:9341/json')).json(); wsUrl = t.find((x: any) => x.type === 'page')?.webSocketDebuggerUrl ?? ''; } catch {} }
+const ws = new WebSocket(wsUrl); await new Promise((r) => (ws.onopen = r));
+let id = 0; const pending = new Map<number, (v: any) => void>(); const logs: string[] = [];
+ws.onmessage = (m) => { const d = JSON.parse(String(m.data)); if (d.id && pending.has(d.id)) pending.get(d.id)!(d.result ?? d.error); if (d.method === 'Runtime.exceptionThrown') logs.push('EXC ' + (d.params.exceptionDetails.exception?.description ?? d.params.exceptionDetails.text)); if (d.method === 'Runtime.consoleAPICalled' && d.params.type === 'error') logs.push('ERR ' + d.params.args.map((a: any) => a.value ?? a.description).join(' ')); };
+const send = (method: string, params: any = {}) => new Promise<any>((r) => { const i = ++id; pending.set(i, r); ws.send(JSON.stringify({ id: i, method, params })); });
+const ev = async (expr: string) => { const r = await send('Runtime.evaluate', { expression: expr, returnByValue: true, awaitPromise: true }); if (r.exceptionDetails) throw new Error(r.exceptionDetails.exception?.description ?? r.exceptionDetails.text); return r.result?.value; };
+await send('Runtime.enable'); await send('Page.enable'); await send('Page.navigate', { url: base });
+let pass = 0, fail = 0;
+const ok = (n: string, c: boolean, d: any = '') => { if (c) pass++; else { fail++; console.log('FAIL', n, d); } };
+const nav = async () => { await send('Page.navigate', { url: base }); await Bun.sleep(8000); };
+await ev(`localStorage.clear()`); await nav();
+const total = await ev('menuColumns().length');
+ok('all columns visible by default', (await ev('state.hiddenCols.size')) === 0);
+ok('summary all', (await ev(`document.getElementById('columns-summary').textContent`)) === `${total} of ${total}`);
+await ev(`document.getElementById('columns-btn').click()`); await Bun.sleep(400);
+ok('one row per column', (await ev(`document.querySelectorAll('#columns-panel .dd-opt').length`)) === total);
+ok('all checked', (await ev(`document.querySelectorAll('#columns-panel .dd-opt[aria-selected="true"]').length`)) === total);
+await ev(`document.querySelector('#columns-panel .dd-opt[data-id="beta"]').click()`);
+await ev(`document.querySelector('#columns-panel .dd-opt[data-id="pe"]').click()`); await Bun.sleep(500);
+ok('two hidden', (await ev('state.hiddenCols.size')) === 2);
+ok('header lacks Beta', !(await ev(`[...document.querySelectorAll('thead th')].some(th => /^\\s*Beta\\b/.test(th.textContent))`)));
+await nav();
+ok('persisted after reload', (await ev('state.hiddenCols.size')) === 2 && (await ev('state.hiddenCols.has("beta") && state.hiddenCols.has("pe")')));
+await ev(`document.getElementById('columns-btn').click()`); await Bun.sleep(400);
+await ev(`document.querySelector('#columns-panel [data-act="reset"]').click()`); await Bun.sleep(500);
+ok('reset shows all', (await ev('state.hiddenCols.size')) === 0);
+await nav(); ok('reset persisted', (await ev('state.hiddenCols.size')) === 0);
+
+await ev(`state.hiddenCols = new Set(); state.filters = { catalog: { beta: '>1.2' } }; render(); 1`);
+const withCol = await ev('catalogIds().length');
+ok('beta filter narrows', withCol > 0 && withCol < (await ev('store.n')), withCol);
+await ev(`state.hiddenCols = new Set(['beta']); render(); 1`);
+ok('hidden column still filters', (await ev('catalogIds().length')) === withCol, await ev('catalogIds().length'));
+ok('hidden column header gone', !(await ev(`[...document.querySelectorAll('thead th')].some(th => /^\\s*Beta\\b/.test(th.textContent))`)));
+await ev(`state.filters = {}; state.hiddenCols = new Set(); render(); 1`);
+
+// locked rows and optional base columns
+await ev(`document.getElementById('columns-btn').click()`); await Bun.sleep(400);
+ok('use and ticker listed first', (await ev(`[...document.querySelectorAll('#columns-panel .dd-opt')].slice(0,2).map(r => r.dataset.id).join()`)) === 'use,ticker');
+ok('locked rows aria-disabled and selected', (await ev(`[...document.querySelectorAll('#columns-panel .dd-locked')].every(r => r.getAttribute('aria-disabled') === 'true' && r.getAttribute('aria-selected') === 'true') && document.querySelectorAll('#columns-panel .dd-locked').length`)) === 2);
+await ev(`document.querySelector('#columns-panel .dd-opt[data-id="ticker"]').click()`);
+await ev(`document.querySelector('#columns-panel [data-act="none"]').click()`); await Bun.sleep(500);
+ok('Clear keeps ticker', !(await ev('state.hiddenCols.has("ticker") || state.hiddenCols.has("use")')));
+ok('ticker header stays', await ev(`[...document.querySelectorAll('thead th')].some(th => /Ticker/.test(th.textContent))`));
+ok('locked row has no Only button', (await ev(`document.querySelectorAll('#columns-panel .dd-locked button.dd-only').length`)) === 0);
+ok('numbers are aligned', (await ev(`new Set([...document.querySelectorAll('#columns-panel .dd-opt .dd-num')].slice(0, 6).map(n => Math.round(n.getBoundingClientRect().right))).size`)) === 1);
+await ev(`document.querySelector('#columns-panel [data-act="reset"]').click()`); await Bun.sleep(300);
+await ev(`document.querySelector('#columns-panel .dd-opt[data-id="sector"]').click()`); await Bun.sleep(500);
+ok('sector header gone', !(await ev(`[...document.querySelectorAll('thead th')].some(th => /^\\s*Sector\\b/.test(th.textContent))`)));
+ok('row cells match header cells', (await ev(`document.querySelector('thead tr').children.length`)) === (await ev(`document.querySelector('tbody tr[data-key]').children.length`)));
+await ev(`state.hiddenCols = new Set(); render(); 1`);
+console.log(`${pass} passed, ${fail} failed; console errors: ${logs.length ? logs.join(' | ') : 'none'}`);
+proc.kill(); process.exit(fail ? 1 : 0);
