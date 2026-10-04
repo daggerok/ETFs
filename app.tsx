@@ -223,6 +223,8 @@ const el = {
   tableHead: byId('table-head'),
   tableBody: byId('table-body'),
   tableScroll: byId('table-scroll'),
+  busyOverlay: byId('busy-overlay'),
+  busyLabel: byId('busy-label'),
   staticLoadSentinel: byId('static-load-sentinel'),
   staticLoadStatus: byId('static-load-status'),
 };
@@ -1539,7 +1541,7 @@ function scheduleWatchlistRefresh(): void {
   watchlistRefreshTimer = setTimeout(() => {
     watchlistRefreshTimer = null;
     if (state.activeTab === 'watchlist') { renderTabs(); renderWatchlistTable(); }
-  }, 150);
+  }, 500);
 }
 
 function activeSheetTab(): 'holdings' | 'history' | null {
@@ -1897,7 +1899,7 @@ function getSelectedTabs(): TabInfo[] {
   }
 
   if (selectedKeys().length > 0) {
-    const rowCount = getDedupedWatchlistRows().length;
+    const rowCount = watchlistTabCount();
     // While holdings are still loading, never show a misleading exact count.
     const incomplete = isHoldingsLoading() || selectedKeys().some(key => !holdingsComplete.has(key));
     const count = incomplete ? (rowCount ? `${rowCount}+` : isHoldingsLoading() ? 'Loading…' : 0) : rowCount;
@@ -2696,6 +2698,29 @@ function initSearchSuggest(): void {
 }
 
 
+// ---- busy overlay: spinner over the table while heavy work blocks the page ----
+
+let busyCount = 0;
+
+function setBusy(on: boolean, label = ''): void {
+  busyCount = Math.max(0, busyCount + (on ? 1 : -1));
+  if (on && label) el.busyLabel.textContent = label;
+  el.busyOverlay.hidden = busyCount === 0;
+}
+
+/** Shows the spinner (CSS delays it ~150 ms, so quick work never flashes it), lets it paint, then runs the blocking work. */
+function withBusy(label: string, work: () => void): void {
+  setBusy(true, label);
+  requestAnimationFrame(() => setTimeout(() => {
+    try {
+      work();
+      void el.tableScroll.offsetHeight; // layout of the new rows happens now, under the spinner
+    } finally {
+      requestAnimationFrame(() => setTimeout(() => setBusy(false), 0));
+    }
+  }, 0));
+}
+
 // =========================================================================
 // 7. Table rendering, sorting & tooltips
 // =========================================================================
@@ -3463,13 +3488,36 @@ function sheetPositions(key: string): HoldingPosition[] {
 
 let watchlistCache: { signature: string; rows: WatchlistRow[] } | null = null;
 
+function watchlistSignature(keys: string[]): string {
+  return keys.join('|') + '#' + keys.map(key => (sheetState.get(`${key}:holdings`)?.rows.length ?? 0)).join(',');
+}
+
+let watchlistCountShown = 0;
+let watchlistCountTimer: any = null;
+
+/**
+ * Row count for the Watchlist tab label. The dedupe over every holding of every selected ETF is the heaviest
+ * computation of the page, so it never runs on the click path: a stale count is shown until it is rebuilt
+ * once (under the spinner) after holdings stopped loading. On the Watchlist tab itself the table needs the rows anyway.
+ */
+function watchlistTabCount(): number {
+  if (state.activeTab === 'watchlist') return (watchlistCountShown = getDedupedWatchlistRows().length);
+  const keys = selectedKeys().sort();
+  if (watchlistCache && watchlistCache.signature === watchlistSignature(keys)) return (watchlistCountShown = watchlistCache.rows.length);
+  if (watchlistCountTimer === null) {
+    watchlistCountTimer = setTimeout(() => {
+      watchlistCountTimer = null;
+      if (isHoldingsLoading()) return; // ensureHoldingsForSelection renders the tabs again when it is done
+      withBusy('Counting watchlist rows…', () => { getDedupedWatchlistRows(); renderTabs(); });
+    }, 400);
+  }
+  return watchlistCountShown;
+}
+
 function getDedupedWatchlistRows(): WatchlistRow[] {
   // Memoized: recomputed only when the selection or the loaded row counts change.
   const keys = selectedKeys().sort();
-  const signature =
-    keys.join('|') +
-    '#' +
-    keys.map(key => (sheetState.get(`${key}:holdings`)?.rows.length ?? 0)).join(',');
+  const signature = watchlistSignature(keys);
   if (watchlistCache && watchlistCache.signature === signature) return watchlistCache.rows;
 
   const map: Map<string, WatchlistRow> = new Map();
@@ -3965,12 +4013,14 @@ function toggleVisibleSelection(selectAll: boolean): void {
     const fresh = ids.filter(id => !state.selected.has(store ? store.keys[id] : '')).length;
     if (!confirmBulk(fresh)) { render(); return; }
   }
-  ids.forEach(id => {
-    const key = store ? store.keys[id] : '';
-    if (selectAll) state.selected.add(key);
-    else state.selected.delete(key);
+  withBusy(selectAll ? 'Selecting ETFs…' : 'Clearing the selection…', () => {
+    ids.forEach(id => {
+      const key = store ? store.keys[id] : '';
+      if (selectAll) state.selected.add(key);
+      else state.selected.delete(key);
+    });
+    afterSelectionChange();
   });
-  afterSelectionChange();
 }
 
 /** All ETFs pill checkbox: every non-blacklisted ETF of every brand, from any tab. */
@@ -3981,12 +4031,14 @@ function toggleAllCatalogEtfs(selectAll: boolean): void {
     const fresh = ids.filter(id => !state.selected.has(store ? store.keys[id] : '')).length;
     if (!confirmBulk(fresh)) { render(); return; }
   }
-  ids.forEach(id => {
-    const key = store ? store.keys[id] : '';
-    if (selectAll) state.selected.add(key);
-    else state.selected.delete(key);
+  withBusy(selectAll ? 'Selecting ETFs…' : 'Clearing the selection…', () => {
+    ids.forEach(id => {
+      const key = store ? store.keys[id] : '';
+      if (selectAll) state.selected.add(key);
+      else state.selected.delete(key);
+    });
+    afterSelectionChange();
   });
-  afterSelectionChange();
 }
 
 function activateFund(key: string): void {
