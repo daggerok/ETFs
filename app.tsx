@@ -2779,7 +2779,8 @@ function captureViewAnchor(): ViewAnchor {
 function restoreViewAnchor(anchor: ViewAnchor, keepRows: boolean): void {
   if (anchor.tab !== state.activeTab) return;
   const box = el.tableScroll;
-  if (keepRows && state.activeTab === 'All' && store) {
+  const atTop = anchor.top <= 0; // a view at the very top stays there while rows arrive above the first one (feeds still loading)
+  if (keepRows && !atTop && state.activeTab === 'All' && store) {
     // the anchor row may sit beyond the first mounted chunk: mount chunks until it is in the DOM
     const position = new Map<string, number>();
     catalogVisibleIds.forEach((id, i) => position.set(store!.keys[id], i));
@@ -2787,7 +2788,7 @@ function restoreViewAnchor(anchor: ViewAnchor, keepRows: boolean): void {
     if (hit) while ((position.get(hit.key) as number) >= catalogRenderedCount && catalogRenderedCount < catalogVisibleIds.length) growCatalogChunk();
   }
   const headBottom = el.tableHead.getBoundingClientRect().bottom;
-  if (keepRows && anchor.rows.length) {
+  if (keepRows && !atTop && anchor.rows.length) {
     const byKey = new Map<string, any>();
     for (const tr of Array.from(el.tableBody.rows) as any[]) {
       const key = tr.dataset.key || tr.dataset.ticker;
@@ -4001,19 +4002,48 @@ function activateFund(key: string): void {
   }
 }
 
+/**
+ * Everything the Clear button resets: the confirm text names each label, the saved keys are removed (a reload shows the
+ * first-visit view) and reset() puts the state back to its default. Not listed, so kept: the blacklist and the theme.
+ */
+const RESET_ITEMS: { label: string; keys: string[]; reset(): void }[] = [
+  { label: 'selected ETFs', keys: [SELECTED_KEY, ACTIVE_FUND_KEY], reset: () => { state.selected.clear(); state.activeFundKey = null; } },
+  { label: 'searches', keys: [FILTERS_KEY], reset: () => { state.queryByTab = {}; } },
+  { label: 'sort order', keys: [SORTS_KEY], reset: () => { state.sortByTab = {}; } },
+  { label: 'open tab', keys: [SITE_STATE_KEY], reset: () => { state.activeTab = 'All'; } },
+  { label: 'brand and category selection', keys: [VIEW_FILTERS_KEY], reset: () => { state.hiddenBrands = new Set(); state.hiddenCategories = new Set(); legacyCategory = ''; } },
+  { label: 'shown columns', keys: [VIEW_FILTERS_KEY], reset: () => { state.hiddenCols = new Set(); } },
+  { label: 'hide stale returns', keys: [VIEW_FILTERS_KEY], reset: () => { state.hideStale = false; state.staleDays = DEFAULT_STALE_DAYS; } },
+  { label: 'column filters and types', keys: [COLUMN_FILTERS_KEY, COLUMN_TYPES_KEY], reset: () => { state.filters = {}; state.typeOverrides = {}; } },
+  { label: 'Filters on/off', keys: [SHOW_FILTERS_KEY], reset: () => { state.showFilters = true; } },
+  { label: 'Sticky #', keys: [STICKY_RANK_KEY], reset: () => { state.stickyRank = false; } },
+  { label: 'remembered table views', keys: [VIEW_KEY], reset: () => { savedViews = {}; settledViewTabs.clear(); restoringViewTabs.clear(); clearTimeout(saveViewTimer); } },
+];
+const RESET_KEPT = ['blacklist', 'theme'];
+
+/** The Clear button: after one confirm, everything but the blacklist and the theme goes back to the first-visit view. */
 function clearSelectionAndSearch(): void {
-  state.selected.clear();
-  state.activeFundKey = null;
-  state.queryByTab = {};
-  state.activeTab = 'All';
-  applySortForTab('All');
-  persistSelection();
-  lsRemove(ACTIVE_FUND_KEY);
+  const message = `Reset to the default view?\n\nWill be reset: ${RESET_ITEMS.map(item => item.label).join(', ')}\nWill be kept: ${RESET_KEPT.join(', ')}`;
+  if (!confirm(message)) return;
+  RESET_ITEMS.forEach(item => { item.keys.forEach(lsRemove); item.reset(); });
+  [brandDd, categoryDd, columnsDd].forEach(dd => dd?.close());
+  filterTimers.forEach(timer => clearTimeout(timer));
+  filterTimers.clear();
+  // caches keyed by the state that was just reset: rebuilt on the next render
+  viewCache = null;
+  baselineCache = null;
+  gridBaselineCache = null;
+  catalogFilterCache = null;
+  watchlistCache = null;
+  catalogChunkSig = '';
+  filtersSig = '';
+  applySortForTab(state.activeTab);
+  resetSheetPaging();
   el.searchInput.value = '';
-  updateSearchClearBtn();
-  persistSearches();
-  persistSiteState();
-  render();
+  syncSearchInput();
+  el.tableScroll.scrollTop = 0;
+  el.tableScroll.scrollLeft = 0;
+  render(false);
 }
 
 function blacklistTickers(rawTickers: string[]): void {
