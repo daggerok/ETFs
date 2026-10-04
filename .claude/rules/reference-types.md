@@ -33,3 +33,7 @@ grep -n '<reference types=' scripts/update-data.ts
 ```
 
 and confirm the line still appears, unchanged, at its original position.
+
+## Each file references every type set it uses (2026-10-04)
+
+IntelliJ without a tsconfig sees only the types a file references. A file that calls `Bun.*` needs `/// <reference types="bun" />` even when it already has `node` (iShares was missing it: TS2868 Cannot find name 'Bun'). Amplify and iShares carry both lines, `node` first, then `bun`. Add a second line, never replace or move the existing one. Verify with `.claude/tools/tc/check.sh <repo>` (see `ts-ide-errors.md`)

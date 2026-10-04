@@ -23,3 +23,10 @@
 - `.claude/tools/cleanup-branches.sh <dir> <repo> dry|do` does exactly that for local and remote branches; run it per repo after every rollout (`for d in ETFs/*/; do ...; done`)
 - Never delete a branch that is checked out in a git worktree or whose worktree has uncommitted changes (a stale overnight worktree held real uncommitted work); report it to the owner instead
 - A command like `cat > file` without a heredoc waits on stdin forever and hangs a background run: always give it input
+
+## Rollout scripts (lessons of 2026-10-04)
+- `( set -e; ... ) && echo OK || echo FAILED` disables `set -e` inside the subshell: a failing step does not stop it and "OK" is printed anyway. Six brands shipped without a passing e2e this way. Gate with explicit `|| exit 1` per step, or put the gates in their own script file (a script with `set -euo pipefail` does stop), and never trust an `OK` line: verify the evidence (e2e output, exit codes)
+- `$(...)` of a failing pipeline and `| tail` hide exit codes (`PIPESTATUS` is empty in zsh): capture `rc=0; cmd > log || rc=$?`
+- Parallel agents share one scratchpad: `pkill -f serve.ts` kills other agents' servers. Give each agent its own port range and kill by PID, not by pattern
+- A throwaway e2e config that works for one brand is not universal: dropdowns can be hidden (single category) and tiny catalogs (3 funds) break "select the 4th row" steps. Read the e2e output, not just the last line
+- Stocks merges use `--rebase --delete-branch`, ETF repos `--squash --delete-branch`
