@@ -13,7 +13,7 @@
 - A run with `TICKERS`/`MAX_FETCHES`/filters must keep the catalog rows and files of unselected funds: `index.json` always lists every fund that has `funds/*/meta.json`. Incident: a one-ticker workflow run shrank index.json to 1 row in Schwab and WisdomTree (before: Pacer, Goldman-Sachs). Test it with a mocked fetch (one ticker -> same row count)
 
 ## index.json metrics contract (hub reads it)
-- Every `funds[].metrics` has the same keys, percent numbers, `null` for unavailable (never 0), plus mandatory `returnsBasis` (non-empty text: official NAV vs derived from Yahoo) and `performanceAsOf` (ISO date the returns are as of, not the NAV date, or null). Full table in STANDARD.md section 9a
+- Every `funds[].metrics` has the same keys, percent numbers, `null` for unavailable (never 0), plus `dividendYieldBasis` (code of the definition behind `dividendYield`: `official-trailing-12m`, `official-distribution-rate`, `official-other`, `computed-trailing-12m`, `indicated`; `null` when the yield is null; the hub treats a missing key as unknown), plus mandatory `returnsBasis` (non-empty text: official NAV vs derived from Yahoo) and `performanceAsOf` (ISO date the returns are as of, not the NAV date, or null). Full table in STANDARD.md section 9a
 
 ## Concurrency must be real
 - `CONCURRENCY=15 ./scripts/update-data.ts` must fetch funds in parallel: a worker pool with per-worker request lanes that pace `REQUEST_SLEEP` per worker. A single global gate makes CONCURRENCY useless (found in Sprott, aberdeen, Amplify, Franklin)
