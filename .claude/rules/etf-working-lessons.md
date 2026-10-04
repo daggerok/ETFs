@@ -16,3 +16,10 @@
 - "0 funds updated" is often a correct `unchanged`; SEC returns 403 without a contact in the User-Agent
 - Live API data in `api/` must never be committed by a test or acceptance run: `git checkout -- api/` and delete created files
 - Commit messages follow Conventional Commits; the owner's prose style uses plain hyphens and `->`, no trailing periods
+
+## Branch hygiene (after the 2026-10-04 cleanup)
+- Merge with `gh pr merge --squash --delete-branch` (Stocks: `--rebase --delete-branch`) so no remote branch survives, then `git switch main && git pull --ff-only` and delete the local branch
+- Squash and rebase merges leave the local branch looking unmerged (`git branch --merged` is empty): verify with `git cherry origin/main <branch>` (no `+` lines) or a MERGED PR whose head SHA equals the branch tip before `git branch -D`
+- `.claude/tools/cleanup-branches.sh <dir> <repo> dry|do` does exactly that for local and remote branches; run it per repo after every rollout (`for d in ETFs/*/; do ...; done`)
+- Never delete a branch that is checked out in a git worktree or whose worktree has uncommitted changes (a stale overnight worktree held real uncommitted work); report it to the owner instead
+- A command like `cat > file` without a heredoc waits on stdin forever and hangs a background run: always give it input

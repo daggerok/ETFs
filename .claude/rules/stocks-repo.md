@@ -5,3 +5,7 @@
 **Why:** the owner wanted the same look, feel and functionality for stocks as for ETFs (2026-10-03), without disturbing the 29 ETF repos
 
 **How to apply:** after any change to the Stocks updater run `bun test`, `bun build --target=bun scripts/update-data.ts --outfile=/dev/null`, `git diff --check` and the three checks above; after changing the controls regenerate the workflow and update the README controls table (a test keeps config, `CONTROL_NAMES`, README and `--help` in sync); never commit data from a test run (the published feed is the 97-stock watchlist from `scio-examples/target/watchlist/All Stocks.txt`)
+
+## Stocks has its own agentic setup
+
+`../Stocks/.claude/rules/` carries the rules that apply there (bun-only, tool names, reference types, working rules, tests, UI standard pointer). When a rule here changes (bun-only-tooling, tool-names, reference-types, ui-standard, the branch hygiene lesson), check whether the Stocks copy needs the same edit, and the other way round. Shared tools stay here (`etf-std`, `stocks-std`, `ui-std`, `cleanup-branches.sh`); Stocks rules point at them by the sibling path `../ETFs/.claude/tools/`
