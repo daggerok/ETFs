@@ -62,6 +62,8 @@ Every column of the ETF catalog and of the Watchlist, Holdings, History and Dist
 
 A row of filter inputs sits under the column headers (the `Column filters` button hides it, `Clear filters` empties it). Filters of different columns are combined with AND, the search box, the Brands and Categories dropdowns, the stale toggle and the blacklist apply on top, and Copy Tickers, the CSV and TXT exports and the `Use` select-all checkbox follow the filtered rows. Filters and type overrides are remembered in the browser (`etf-hub-column-filters`, `etf-hub-column-types`, `etf-hub-show-filters`); the Holdings, History and Distributions filters are keyed by the column title, because the sheets differ between brands
 
+The `Columns` menu (next to Brands and Categories) lists every column of the catalog table from the first to the last, all shown by default, with a search box and the `All`, `Clear`, `Toggle` and `Reset` buttons. `Use` and `Ticker` are listed but locked. Hiding a column only removes it from the table: the filters, the sorting, the exports and Copy Tickers still use it. The choice is remembered in the browser (`hiddenCols` in `etf-hub-view-filters`, never the data) and the menu is shown on the catalog tabs only
+
 Inside one filter: a space means AND, a comma means OR, a leading `!` means NOT, `?` matches an empty or unavailable value and `!?` a value that is there; a value that is unavailable matches only `?` and negated conditions. An unquoted space ends the value, so quote values that contain one (`>="2024-06-15 09:30"`)
 
 | Type | Examples |

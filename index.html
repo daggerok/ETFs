@@ -223,6 +223,10 @@
     .dd-seltoggle.is-on{background:#eff6ff;border-color:#bfdbfe;color:#1d4ed8}
     .dd-seltoggle:focus-visible{outline:none;border-color:#3b82f6;box-shadow:0 0 0 3px rgba(59,130,246,.2)}
     .dd-zero .dd-name,.dd-zero .dd-num{opacity:.5}
+    .dd-only-ghost{visibility:hidden}
+    .dd-opt.dd-locked{cursor:not-allowed}
+    .dd-opt.dd-locked .dd-check{opacity:.55}
+    .dd-opt.dd-locked .dd-name{opacity:.7}
     .dd-act{flex:none;font-size:.75rem;font-weight:500;padding:.3rem .65rem;border-radius:9999px;border:1px solid #e2e8f0;background:#fff;color:#334155;cursor:pointer;transition:background-color .12s,border-color .12s}
     .dd-act:hover{background:#f1f5f9;border-color:#cbd5e1}
     .dd-act:focus-visible{outline:none;border-color:#3b82f6;box-shadow:0 0 0 3px rgba(59,130,246,.2)}
@@ -304,6 +308,7 @@
     .dark .filter-clear:hover{color:#e2e8f0;background:#1e293b}
     #table-scroll .filter-row .watchlist-sticky-col{top:var(--head-h,2.75rem)}
   </style>
+  <style id="column-visibility-style"></style>
 <style id="catalog-summary-styles">
     #app-subtitle:empty { display: none; }
     #ticker-count { cursor: help; font-family: inherit; }
@@ -379,6 +384,10 @@
         <div class="dd-root">
           <button type="button" id="category-btn" class="dd-trigger" aria-haspopup="dialog" aria-expanded="false" aria-controls="category-panel"><span class="dd-label">Categories:</span><span class="dd-value" id="category-summary">...</span><span class="dd-badge" id="category-badge" hidden></span><svg class="dd-chev" viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 8 5 5 5-5"/></svg></button>
           <div id="category-panel" class="dd-panel dd-panel-wide" hidden></div>
+        </div>
+        <div class="dd-root" id="columns-root">
+          <button type="button" id="columns-btn" class="dd-trigger" aria-haspopup="dialog" aria-expanded="false" aria-controls="columns-panel" title="Choose the columns of the table"><span class="dd-label">Columns:</span><span class="dd-value" id="columns-summary">...</span><span class="dd-badge" id="columns-badge" hidden></span><svg class="dd-chev" viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 8 5 5 5-5"/></svg></button>
+          <div id="columns-panel" class="dd-panel" hidden></div>
         </div>
         <button type="button" id="filters-btn" class="dd-trigger" aria-pressed="true" title="Show or hide the row of filter inputs under the column headers"><span class="dd-label">Column filters:</span><span class="dd-value" id="filters-summary">shown</span><span class="dd-badge" id="filters-badge" hidden></span></button>
         <button type="button" id="clear-filters-btn" class="dd-act" hidden title="Clear every column filter of the shown table">Clear filters</button>

@@ -229,6 +229,7 @@ type AppState = {
   blacklist: Set<string>;
   hiddenBrands: Set<string>; // repos unchecked in the brand filter
   hiddenCategories: Set<string>; // categories unchecked in the category filter (empty = no category filtering)
+  hiddenCols: Set<string>; // catalog columns unchecked in the Columns menu (empty = every column shown)
   hideStale: boolean;
   staleDays: number;
   filters: Record<string, Record<string, string>>; // scope (catalog, watchlist, holdings, history, distributions) -> column key -> filter expression
@@ -250,6 +251,7 @@ const state: AppState = {
   blacklist: new Set(),
   hiddenBrands: new Set(),
   hiddenCategories: new Set(),
+  hiddenCols: new Set(),
   hideStale: false,
   staleDays: DEFAULT_STALE_DAYS,
   filters: {},
@@ -2094,6 +2096,62 @@ function brandDropdownItems(): DropdownItem[] {
   });
 }
 
+// ---- the Columns menu: Use and Ticker are listed but locked, everything else is optional -------
+
+const CATALOG_LEADING_CELLS = 2; // the # cell and the Use cell stand in front of CATALOG_COLUMNS
+
+let columnsDd: Dropdown | null = null;
+
+/** One row per column, first to last as in the table. */
+function menuColumns(): Array<{ key: string; label: string; locked: boolean }> {
+  return [{ key: 'use', label: 'Use', locked: true }]
+    .concat(CATALOG_COLUMNS.map(col => ({ key: col.key, label: col.label, locked: col.key === 'ticker' })));
+}
+
+function columnMenuItems(): DropdownItem[] {
+  return menuColumns().map((col, index) => ({ id: col.key, label: col.label, count: index + 1, selected: col.locked || !state.hiddenCols.has(col.key), locked: col.locked }));
+}
+
+/** Hidden cells are removed with CSS (header, filter row and body share the same cell positions), so sorting, filters, exports and Copy Tickers never change. */
+function hiddenColumnsCss(): string {
+  const selectors: string[] = [];
+  CATALOG_COLUMNS.forEach((col, index) => {
+    if (col.key === 'ticker' || !state.hiddenCols.has(col.key)) return;
+    const position = index + CATALOG_LEADING_CELLS + 1;
+    selectors.push(`#table-head > tr > :nth-child(${position}), #table-body > tr > :nth-child(${position})`);
+  });
+  return selectors.length ? `${selectors.join(',')}{display:none}` : '';
+}
+
+function renderColumnsButton(): void {
+  const total = menuColumns().length;
+  const shown = total - state.hiddenCols.size;
+  const summary: any = document.getElementById('columns-summary');
+  const badge: any = document.getElementById('columns-badge');
+  const button: any = document.getElementById('columns-btn');
+  if (!summary || !badge || !button) return;
+  summary.textContent = filterSummary(shown, total);
+  badge.hidden = shown === total;
+  badge.textContent = `${shown}/${total}`;
+  button.classList.toggle('is-filtered', shown < total);
+}
+
+/** The catalog tabs apply the hidden columns and show the menu; the Watchlist and the detail tabs show every cell. */
+function setCatalogColumnStyle(on: boolean): void {
+  const style: any = document.getElementById('column-visibility-style');
+  const root: any = document.getElementById('columns-root');
+  if (style) style.textContent = on ? hiddenColumnsCss() : '';
+  if (root) root.hidden = !on;
+  if (!on && columnsDd) columnsDd.close();
+  renderColumnsButton();
+}
+
+function applyColumnSelection(selected: Set<string>): void {
+  state.hiddenCols = new Set(menuColumns().filter(col => !col.locked && !selected.has(col.key)).map(col => col.key));
+  persistViewFilters();
+  setCatalogColumnStyle(true);
+}
+
 function renderBrandList(): void {
   const sig = [
     brandStatus.join(','), brandFunds.map(list => list.length).join(','), hiddenBrandsSig(), [...remoteFallback].join(','),
@@ -2105,16 +2163,16 @@ function renderBrandList(): void {
 
 // ---- filter dropdowns: one reusable MultiSelect (brands, categories) -------
 
-type DropdownItem = { id: string; label: string; count: number; selected: boolean; badges?: string };
+type DropdownItem = { id: string; label: string; count: number; selected: boolean; badges?: string; locked?: boolean }; // locked: always selected, cannot be toggled
 
 type Dropdown = { refresh(): void; open(query?: string): void; close(restoreFocus?: boolean): void; isOpen(): boolean };
 
 type DropdownConfig = {
   trigger: any;
   panel: any;
-  title: string; // "Brands"
-  noun: string; // "brands", used in the search placeholder and the empty state
-  unit: string; // what the row number counts: "funds" or "ETFs"
+  title: string; // "Exchanges"
+  noun: string; // "exchanges", used in the search placeholder and the empty state
+  unit: string; // what the row number counts: "stocks" or "columns"
   getItems(): DropdownItem[];
   /** Receives the complete new selection; the owner persists it and re-renders. */
   onChange(selected: Set<string>): void;
@@ -2213,12 +2271,12 @@ function createDropdown(cfg: DropdownConfig): Dropdown {
     const keepScroll = list.scrollTop;
     list.innerHTML = shown.length
       ? shown.map((item, i) => `
-        <div class="dd-opt${item.count === 0 ? ' dd-zero' : ''}" role="option" id="${optionId(i)}" data-id="${escapeHtml(item.id)}" aria-selected="${item.selected}">
+        <div class="dd-opt${item.count === 0 ? ' dd-zero' : ''}${item.locked ? ' dd-locked' : ''}" role="option" id="${optionId(i)}" data-id="${escapeHtml(item.id)}" aria-selected="${item.selected}"${item.locked ? ' aria-disabled="true" title="Always shown"' : ''}>
           <span class="dd-check">${DD_TICK}</span>
           <span class="dd-name" title="${escapeHtml(item.label)}">${escapeHtml(item.label)}</span>
           ${item.badges || ''}
           <span class="dd-num" title="${escapeHtml(cfg.unit)}">${item.count}</span>
-          <button type="button" class="dd-only" data-only tabindex="-1" aria-label="Only ${escapeHtml(item.label)}">Only</button>
+          ${item.locked ? `<span class="dd-only dd-only-ghost" aria-hidden="true">Only</span>` : `<button type="button" class="dd-only" data-only tabindex="-1" aria-label="Only ${escapeHtml(item.label)}">Only</button>`}
         </div>`).join('')
       : `<div class="dd-empty">${selectedOnly && !query.trim() ? `Nothing selected` : `No ${escapeHtml(cfg.noun)} match “${escapeHtml(query.trim())}”`}</div>`;
     list.scrollTop = keepScroll;
@@ -2241,6 +2299,7 @@ function createDropdown(cfg: DropdownConfig): Dropdown {
     else if (op === 'reset') next = new Set(all.map(item => item.id));
     else if (op === 'flip') { if (next.has(id)) next.delete(id); else next.add(id); }
     else if (op === 'only') next = new Set([id]);
+    all.forEach(item => { if (item.locked) next.add(item.id); }); // locked rows stay selected whatever the operation
     cfg.onChange(next);
     refresh();
   }
@@ -2614,6 +2673,7 @@ function render(): void {
   if (state.activeTab === 'watchlist') renderWatchlistTable();
   else if (isDetailTab(state.activeTab)) renderDetailTable(detailTabKey(state.activeTab));
   else renderFundsTable();
+  setCatalogColumnStyle(state.activeTab !== 'watchlist' && !isDetailTab(state.activeTab));
   renderFilterControls();
   fitTableHeight();
   syncHeadHeight();
@@ -3989,6 +4049,7 @@ function persistViewFilters(): void {
   lsSet(VIEW_FILTERS_KEY, JSON.stringify({
     hiddenBrands: [...state.hiddenBrands],
     hiddenCategories: [...state.hiddenCategories],
+    hiddenCols: [...state.hiddenCols],
     hideStale: state.hideStale,
     staleDays: state.staleDays,
   }));
@@ -4069,6 +4130,7 @@ function restoreViewFilters(): void {
   if (Array.isArray(saved.hiddenBrands)) state.hiddenBrands = new Set(saved.hiddenBrands.filter((repo: unknown) => typeof repo === 'string' && repos.has(repo)));
   if (Array.isArray(saved.hiddenCategories)) state.hiddenCategories = new Set(saved.hiddenCategories.filter((name: unknown) => typeof name === 'string'));
   else if (typeof saved.category === 'string' && saved.category) legacyCategory = saved.category;
+  if (Array.isArray(saved.hiddenCols)) state.hiddenCols = new Set(saved.hiddenCols.filter((key: unknown) => typeof key === 'string' && menuColumns().some(col => col.key === key && !col.locked)));
   state.hideStale = saved.hideStale === true;
   const days = Number(saved.staleDays);
   if (Number.isFinite(days) && days >= 1 && days <= 3650) state.staleDays = Math.floor(days);
@@ -4190,6 +4252,15 @@ function bindEvents(): void {
   });
 
   // Filters bar: brand and category multi-select popovers, hide stale returns.
+  columnsDd = createDropdown({
+    trigger: byId('columns-btn'),
+    panel: byId('columns-panel'),
+    title: 'Columns',
+    noun: 'columns',
+    unit: 'column position',
+    getItems: columnMenuItems,
+    onChange: applyColumnSelection,
+  });
   brandDd = createDropdown({
     trigger: el.brandBtn,
     panel: el.brandPanel,
