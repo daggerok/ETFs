@@ -1961,13 +1961,13 @@ function renderTabButtons(container: any, tabs: TabInfo[], alwaysShow: boolean):
   const allSelected = store !== null && everyone.length > 0 && everyone.every(id => state.selected.has(store ? store.keys[id] : ''));
   container.innerHTML = tabs.map(tab => {
     const isActive = tab.id === state.activeTab;
-    const activeClasses = 'bg-blue-600 text-white font-medium border-blue-500 shadow-sm';
+    const activeClasses = 'bg-blue-600 text-white font-medium border-blue-500 shadow-xs';
     const inactiveClasses = 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-200 dark:hover:bg-slate-700 border-slate-200 dark:border-slate-700';
     if (tab.id === 'All') {
       return `
         <div class="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full text-xs transition border whitespace-nowrap ${isActive ? activeClasses : inactiveClasses}">
           <input type="checkbox" id="select-all-toggle" ${allSelected ? 'checked' : ''} class="w-3.5 h-3.5 accent-blue-600 cursor-pointer" title="Select / Deselect all ETFs of all brands" />
-          <button data-tab="All" class="font-medium hover:underline focus:outline-none">
+          <button data-tab="All" class="font-medium hover:underline focus:outline-hidden">
             ${escapeHtml(tab.label)} (${tab.count})
           </button>
         </div>
@@ -2183,7 +2183,9 @@ function renderColumnsButton(): void {
 
 /** The catalog tabs apply the hidden columns and show the menu; the Watchlist and the detail tabs show every cell. */
 function setCatalogColumnStyle(on: boolean): void {
-  const style: any = document.getElementById('column-visibility-style');
+  // the style element is created here: src/index.html carries no inline <style> after the Parcel migration
+  let style: any = document.getElementById('column-visibility-style');
+  if (!style) { style = document.createElement('style'); style.id = 'column-visibility-style'; document.head.appendChild(style); }
   const root: any = document.getElementById('columns-root');
   if (style) style.textContent = on ? hiddenColumnsCss() : '';
   if (root) root.hidden = !on;
@@ -2978,7 +2980,7 @@ function sortHeader(label: string, key: string, numeric = false, extraClass = ''
   const arrow = active ? (state.sortDir === 'asc' ? ' ↑' : ' ↓') : '';
   const align = numeric ? ' text-right' : '';
   const tooltip = getHeaderTooltip(label);
-  return `<th class="py-3.5 px-4${align}${extraClass ? ' ' + extraClass : ''}" title="${escapeHtml(tooltip)}"><div class="flex items-center gap-1.5${numeric ? ' justify-end' : ''}"><button data-sort="${escapeHtml(key)}" title="${escapeHtml(tooltip)}" class="uppercase tracking-wider hover:text-blue-600 dark:hover:text-blue-400 focus:outline-none focus:text-blue-600 dark:focus:text-blue-400">${escapeHtml(label)}${arrow}</button>${badge}</div></th>`;
+  return `<th class="py-3.5 px-4${align}${extraClass ? ' ' + extraClass : ''}" title="${escapeHtml(tooltip)}"><div class="flex items-center gap-1.5${numeric ? ' justify-end' : ''}"><button data-sort="${escapeHtml(key)}" title="${escapeHtml(tooltip)}" class="uppercase tracking-wider hover:text-blue-600 dark:hover:text-blue-400 focus:outline-hidden focus:text-blue-600 dark:focus:text-blue-400">${escapeHtml(label)}${arrow}</button>${badge}</div></th>`;
 }
 
 /** Header badge with the column type (auto-detected or set by the user); click cycles the type, Shift+click returns to auto-detection. */
@@ -3120,7 +3122,7 @@ function fundRowHtml(id: number, index: number): string {
           <td class="catalog-sticky-col catalog-sticky-use py-2.5 px-4 text-center">
             <div class="inline-flex items-center justify-center gap-1.5">
               <input data-checkbox="${escapeHtml(key)}" type="checkbox" ${selected ? 'checked' : ''} class="w-4 h-4 accent-blue-600 cursor-pointer" aria-label="Use ${escapeHtml(s.ticker[id])}" />
-              <button data-blacklist="${escapeHtml(key)}" class="w-4 h-4 rounded text-slate-300 dark:text-slate-600 hover:text-rose-500 dark:hover:text-rose-400 leading-none transition" title="Blacklist ${escapeHtml(s.ticker[id])} - hide it from All ETFs">✕</button>
+              <button data-blacklist="${escapeHtml(key)}" class="w-4 h-4 rounded-sm text-slate-300 dark:text-slate-600 hover:text-rose-500 dark:hover:text-rose-400 leading-none transition" title="Blacklist ${escapeHtml(s.ticker[id])} - hide it from All ETFs">✕</button>
             </div>
           </td>
           <td class="catalog-sticky-col catalog-sticky-ticker py-2.5 px-4 font-mono font-semibold text-blue-600 dark:text-blue-400">${escapeHtml(s.ticker[id])}</td>
@@ -3378,7 +3380,7 @@ function setFilter(scope: string, key: string, value: string): void {
   rerenderKeepingFilterFocus();
 }
 
-/** Typing applies the filter after a short pause (FILTER_DEBOUNCE_MS), also when the input loses focus meanwhile; Enter applies it at once (a re-render on blur would swallow the click on a header). */
+/** Typing applies the filter after a short pause (FILTER_DEBOUNCE_MS), also when the input loses focus meanwhile; Enter applies it at once (a re-render on blur-sm would swallow the click on a header). */
 function scheduleFilter(scope: string, key: string, value: string): void {
   const id = `${scope}:${key}`;
   const pending = filterTimers.get(id);
@@ -4287,11 +4289,16 @@ function copyTickers(): void {
   else values = catalogIds().map(id => (store ? store.ticker[id] : ''));
   values = values.sort((a, b) => collator.compare(a, b));
   if (!values.length) return;
-  void copyText(values.join(', ')).then(ok => {
+  void testHooks().copyText(values.join(', ')).then(ok => {
     const oldText = el.copyBtn.textContent;
     el.copyBtn.textContent = ok ? 'Copied!' : 'Copy failed';
     setTimeout(() => { el.copyBtn.textContent = oldText || 'Copy Tickers'; }, 1000);
   });
+}
+
+/** Copy and download go through window so the shared browser tests can replace them (the module scope hides the plain names). */
+function testHooks(): { copyText: typeof copyText; downloadText: typeof downloadText } {
+  return window as unknown as { copyText: typeof copyText; downloadText: typeof downloadText };
 }
 
 /** False when the rows are incomplete and the user declined the warning. */
@@ -4302,7 +4309,7 @@ function confirmExport(warning?: string): boolean {
 function exportCsv(): void {
   const exportData = currentExportRows();
   if (!exportData.rows.length || !confirmExport(exportData.warning)) return;
-  downloadText(
+  testHooks().downloadText(
     '﻿' + toCsv([exportData.headers, ...exportData.rows.map(row => row.map(cell => String(cell ?? '')))]), // BOM: Excel reads UTF-8
     exportFileName(exportData.scope, 'csv'),
     'text/csv;charset=utf-8;',
@@ -4312,7 +4319,7 @@ function exportCsv(): void {
 function exportTxt(): void {
   const exportData = currentExportRows();
   if (!exportData.rows.length || !confirmExport(exportData.warning)) return;
-  downloadText([exportData.headers, ...exportData.rows].map(row => row.map(txtCell).join('\t')).join('\n'), exportFileName(exportData.scope, 'txt'), 'text/plain;charset=utf-8;');
+  testHooks().downloadText([exportData.headers, ...exportData.rows].map(row => row.map(txtCell).join('\t')).join('\n'), exportFileName(exportData.scope, 'txt'), 'text/plain;charset=utf-8;');
 }
 
 // =========================================================================
@@ -4682,3 +4689,66 @@ function init(): void {
 }
 
 init();
+
+// ---- header summary popover: hover, focus or click on the stock count opens it ----
+
+(() => {
+  const trigger = document.getElementById('ticker-count');
+  const panel = document.getElementById('app-summary');
+  if (!trigger || !panel) return;
+  document.body.appendChild(panel); // top layer: the header's stacking context must not put it under later panels
+  let pinned = false;
+  let closeTimer: ReturnType<typeof setTimeout> | undefined;
+  const position = (): void => {
+    const rect = trigger.getBoundingClientRect();
+    panel.style.left = `${Math.max(16, Math.min(rect.right - panel.offsetWidth, innerWidth - panel.offsetWidth - 16))}px`;
+    panel.style.top = `${Math.max(16, Math.min(rect.bottom + 8, innerHeight - panel.offsetHeight - 16))}px`;
+  };
+  const show = (): void => {
+    clearTimeout(closeTimer);
+    panel.hidden = false;
+    trigger.setAttribute('aria-expanded', 'true');
+    position();
+  };
+  const hide = (): void => {
+    clearTimeout(closeTimer);
+    panel.hidden = true;
+    trigger.setAttribute('aria-expanded', 'false');
+  };
+  const scheduleHide = (): void => {
+    clearTimeout(closeTimer);
+    closeTimer = setTimeout(() => {
+      const focused = document.activeElement;
+      if (!pinned && !trigger.matches(':hover') && !panel.matches(':hover') &&
+          focused !== trigger && !panel.contains(focused)) hide();
+    }, 150);
+  };
+  trigger.addEventListener('pointerenter', event => { if (event.pointerType !== 'touch') show(); });
+  panel.addEventListener('pointerenter', () => clearTimeout(closeTimer));
+  trigger.addEventListener('pointerleave', scheduleHide);
+  panel.addEventListener('pointerleave', scheduleHide);
+  trigger.addEventListener('focus', show);
+  panel.addEventListener('focusin', show);
+  trigger.addEventListener('blur', scheduleHide);
+  panel.addEventListener('focusout', scheduleHide);
+  trigger.addEventListener('click', () => { pinned = !pinned; if (pinned) show(); else hide(); });
+  document.addEventListener('keydown', event => {
+    if (event.key !== 'Escape') return;
+    pinned = false;
+    if (panel.contains(document.activeElement)) trigger.focus();
+    hide();
+  });
+  document.addEventListener('pointerdown', event => {
+    const target = event.target as Node;
+    if (!trigger.contains(target) && !panel.contains(target)) { pinned = false; hide(); }
+  });
+  addEventListener('resize', () => { if (!panel.hidden) position(); });
+  addEventListener('scroll', () => { if (!panel.hidden) position(); }, { passive: true });
+  if (typeof ResizeObserver === 'function') new ResizeObserver(() => { if (!panel.hidden) position(); }).observe(panel);
+})();
+
+// ---- browser test hooks: the module scope hides these from the page, the shared UI tests (ETFs/.claude/tools/ui-std) reach them through window ----
+
+Object.assign(window, { BRANDS, CATALOG_COLUMNS, COLUMN_TYPES_KEY, activateFund, afterSelectionChange, catalogCellText, catalogColumnType, catalogIds, copyText, currentExportRows, downloadText, filterExpressionFor, fundMetaCache, getDedupedWatchlistRows, getVisibleWatchlistRows, gridTypeCache, isHoldingsLoading, keyTicker, menuColumns, persistColumnFilters, persistViewFilters, render, setCatalogColumnStyle, sheetKey, sheetState, state });
+Object.defineProperty(window, 'blacklistVersion', { get: () => blacklistVersion, set: value => { blacklistVersion = value; } });
+Object.defineProperty(window, 'store', { get: () => store, set: value => { store = value; } });
