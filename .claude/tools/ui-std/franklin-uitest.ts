@@ -62,7 +62,7 @@ note('invalid flagged', await ev(`document.querySelector('input[data-filter-col=
 await ev(`(() => { columnFilterState.filters = { catalog: { aumValue: '>1B', ytd: '>0' } }; render(); return 1; })()`);
 const combined = T((f) => num(f.aumValue) && f.aumValue > 1e9 && num(f.ytd) && f.ytd > 0);
 check('combined', (await ev(`filteredCatalogFunds().map(f => f.ticker)`)) as string[], combined);
-check('export rows follow the filters', (await ev(`currentExportRows().rows.map(r => r[1])`)) as string[], combined);
+check('export rows follow the filters', (await ev(`currentExportRows().rows.map(r => r[2])`)) as string[], combined);
 check('table rows follow the filters', (await ev(`[...document.querySelectorAll('#table-body tr[data-ticker]')].map(r => r.dataset.ticker)`)) as string[], combined);
 check('visibleCatalogRows follows the filters', (await ev(`filteredCatalogFunds().map(f => f.ticker)`)) as string[], combined);
 note('toolbar badge', (await ev(`document.getElementById('filters-badge').textContent`)) === '2' && !(await ev(`document.getElementById('clear-filters-btn').hidden`)));
@@ -86,7 +86,7 @@ note('filters restored after reload', (await ev(`document.querySelector('input[d
 await ev(`(() => { columnFilterState.filters = {}; render(); return 1; })()`);
 const pick = (await ev(`state.funds.filter(f => f.holdings > 0).slice(0, 3).map(f => f.ticker)`)) as string[];
 for (const t of pick) await ev(`document.querySelector('input[data-checkbox="${t}"]').click()`);
-for (let i = 0; i < 80; i++) { await Bun.sleep(500); if (!(await ev(`selectedHoldingsLoadState().loading`))) break; }
+for (let i = 0; i < 80; i++) { await Bun.sleep(500); if (!(await ev(`isHoldingsLoading()`))) break; }
 await ev(`document.querySelector('#selected-tabs-bar button[data-tab=watchlist]').click()`);
 await Bun.sleep(500);
 const wl: any[] = await ev(`getDedupedWatchlistRows().map(r => ({ symbol: r.symbol, name: r.name, fundCount: r.fundCount, weightSum: r.weightSum }))`);
@@ -97,7 +97,7 @@ check('watchlist fundCount >=2', await setWl('fundCount', '>=2'), wl.filter((r) 
 check('watchlist name ^a', await setWl('name', '^a'), wl.filter((r) => (r.name || '').toLowerCase().startsWith('a')).map((r) => r.symbol));
 note('watchlist badges+row', (await ev(`document.querySelectorAll('#table-head tr:first-child .type-badge').length`)) === 7 && (await ev(`document.querySelectorAll('#table-head tr.filter-row input').length`)) === 7);
 await setWl('fundCount', '>=2');
-check('watchlist export follows the filters', (await ev(`currentExportRows().rows.map(r => r[0])`)) as string[], wl.filter((r) => r.fundCount >= 2).map((r) => r.symbol));
+check('watchlist export follows the filters', (await ev(`currentExportRows().rows.map(r => r[1])`)) as string[], wl.filter((r) => r.fundCount >= 2).map((r) => r.symbol));
 // detail sheets
 const sheetCount = async (tab: string, scope: string, key: string, expr: string) => {
   await ev(`(() => { columnFilterState.filters = { ${scope}: ${JSON.stringify({ [key]: expr })} }; document.querySelector('#selected-tabs-bar button[data-tab="detail:${tab}"]').click(); return 1; })()`);
