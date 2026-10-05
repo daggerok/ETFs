@@ -362,7 +362,7 @@ function renderColumnsButton(): void {
 function applyColumnSelection(selected: Set<string>): void {
   hiddenColumns = new Set(menuColumns().filter(col => !col.locked && !selected.has(col.key)).map(col => col.key));
   persistHiddenColumns();
-  if (columnsStyle) columnsStyle.textContent = hiddenColumnsCss();
+  withBusy('Updating the columns…', () => { if (columnsStyle) columnsStyle.textContent = hiddenColumnsCss(); });
   renderColumnsButton();
 }
 

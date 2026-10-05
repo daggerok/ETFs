@@ -48,7 +48,7 @@ function categoryItems(): DropdownItem[] {
 function applyCategorySelection(selected: Set<string>): void {
   hiddenCategories = new Set(uniqueCategories().filter(category => !selected.has(category)));
   persistHiddenCategories();
-  render();
+  renderBusy();
 }
 
 function renderCategoriesButton(): void {

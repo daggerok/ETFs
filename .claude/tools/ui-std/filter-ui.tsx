@@ -182,16 +182,18 @@ function syncHeadHeight(): void {
 
 /** Re-renders after a filter change and puts the caret back into the filter input that was being edited. */
 function rerenderKeepingFilterFocus(): void {
-  const active: any = document.activeElement;
-  const key = active && active.dataset ? active.dataset.filterCol : undefined;
-  const scope = active && active.dataset ? active.dataset.filterScope : undefined;
-  const caret = key !== undefined && typeof active.selectionStart === 'number' ? active.selectionStart : 0;
-  suppressTableAnimation = true;
-  render();
-  suppressTableAnimation = false;
-  if (key === undefined) return;
-  const next: any = [...el.tableHead.querySelectorAll('input[data-filter-col]')].find((node: any) => node.dataset.filterCol === key && node.dataset.filterScope === scope);
-  if (next) { next.focus(); try { next.setSelectionRange(caret, caret); } catch { /* not a text input */ } }
+  withBusy('Applying the filter…', () => {
+    const active: any = document.activeElement; // read when the work runs, so a key typed meanwhile keeps its caret
+    const key = active && active.dataset ? active.dataset.filterCol : undefined;
+    const scope = active && active.dataset ? active.dataset.filterScope : undefined;
+    const caret = key !== undefined && typeof active.selectionStart === 'number' ? active.selectionStart : 0;
+    suppressTableAnimation = true;
+    render();
+    suppressTableAnimation = false;
+    if (key === undefined) return;
+    const next: any = [...el.tableHead.querySelectorAll('input[data-filter-col]')].find((node: any) => node.dataset.filterCol === key && node.dataset.filterScope === scope);
+    if (next) { next.focus(); try { next.setSelectionRange(caret, caret); } catch { /* not a text input */ } }
+  });
 }
 
 function persistColumnFilters(): void {
@@ -270,7 +272,7 @@ function clearAllFilters(scope: string): void {
   filterTimers.clear();
   columnFilterState.filters[scope] = {};
   persistColumnFilters();
-  render();
+  renderBusy();
 }
 
 /** Header badge click: next type in the cycle; Shift+click returns to auto-detection. */
@@ -285,7 +287,7 @@ function cycleColumnType(scope: string, key: string, reset: boolean): void {
   else map[key] = next;
   columnFilterState.typeOverrides[scope] = map;
   persistColumnTypes();
-  render();
+  renderBusy();
 }
 
 /** Filter inputs and type badges live in the table header (delegated: the header is rebuilt on every render). */
@@ -296,7 +298,7 @@ function bindColumnFilterEvents(): void {
     filtersBtn.addEventListener('click', () => {
       columnFilterState.show = !columnFilterState.show;
       filterStorageSet(SHOW_FILTERS_KEY, String(columnFilterState.show));
-      render();
+      renderBusy();
     });
   }
   if (clearBtn) {
