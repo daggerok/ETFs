@@ -2,7 +2,7 @@
 # Install the hub tooling and clone the sibling ETF repos into the hub folder (the parent of scripts/), so
 # the hub app works locally with all the data. Order: git must exist (fails without it), bun is installed
 # with the official script when missing, bun i -E installs the hub packages, then the repos are cloned.
-# Run the hub afterwards with: bunx serve . -p 1234  ->  http://localhost:1234
+# Run the hub afterwards with: bun run serve  ->  http://localhost:1234
 # Safe to re-run: repos that are already cloned are skipped, nothing existing is touched.
 
 set -uo pipefail
@@ -118,6 +118,6 @@ cloned=$(grep -c '^cloned ' "$LOG"); skipped=$(grep -c '^skip ' "$LOG"); failed=
 echo
 echo "Done: $cloned cloned, $skipped skipped, $failed failed."
 if [ "$failed" -gt 0 ]; then echo "Re-run ./scripts/install.sh to retry the failed ones (needs network access to github.com)." >&2; exit 1; fi
-echo "Next: bunx serve . -p 1234   (open http://localhost:1234)   |   ./scripts/update.sh pulls fresh data later"
+echo "Next: bun run serve   (open http://localhost:1234)   |   ./scripts/update.sh pulls fresh data later"
 }
 exit $?

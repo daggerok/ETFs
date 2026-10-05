@@ -1,3 +1,4 @@
+// Serves a directory with `bunx serve`: pass the BUILT hub (`<hubDir>/dist` after `bun run build`), not the repo root. `query` keeps ?api=remote
 const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 export async function open(repo: string, port: string, query = '?api=remote', size = '1500,900') {
   const server = Bun.spawn(['bunx', 'serve', repo, '-p', port], { stdout: 'ignore', stderr: 'ignore' });

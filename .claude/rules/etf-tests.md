@@ -33,4 +33,4 @@ snapshot whole documents, or assert implementation details (log text, internal h
 ## Definition of done for a test change
 `bun test` exit 0 locally, and the same file run with the workflow's control variables exported
 (`env $(python3 -c ...config.json -> K=V) bun test`) exit 0; the hub gates still pass.
-- And `.claude/tools/tc/check.sh <repo>` prints nothing (no IDE type errors in the updater, its test or `app.tsx`; see `ts-ide-errors.md`)
+- And `.claude/tools/tc/check.sh <repo>` prints nothing (no IDE type errors in the updater, its test or `src/main.tsx`; see `ts-ide-errors.md`)

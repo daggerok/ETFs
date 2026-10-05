@@ -1,7 +1,7 @@
 # Never remove the `/// <reference types="bun" />` / `<reference types="node" />` line
 
 Any `.ts`/`.tsx`/`.js`/`.jsx` file across the 29 ETF brand repos (the list is
-`.claude/tools/etf-std/registry.json`; the hub's own `app.tsx` carries the line too) that uses Bun-style
+`.claude/tools/etf-std/registry.json`; the hub's own `src/main.tsx` carries the line too) that uses Bun-style
 functionality (top-level `import ... from 'node:*'` run directly by Bun,
 `Bun.*` APIs, `bun:test`, `import.meta.main`, etc.) needs a triple-slash
 reference directive (`/// <reference types="bun" />` or `"node"`) so
