@@ -22,7 +22,7 @@
 
 ## 2. Раскладка репозитория
 
-В корне остаются: `api/` (данные), `scripts/`, `.github/`, `src/` (`index.html`, `main.tsx`, `index.css`, `favicon.ico`), `package.json`, `bun.lock`, `README.md`, `LICENSE`, `.gitignore`. Если updater пишет своё состояние или нужна большая статическая таблица (больше ~300 строк), это лежит в `data/` (Fidelity: `data/held-tickers.ts`, Goldman-Sachs и VanEck: таблицы фондов).
+В корне остаются: `api/` (данные), `scripts/`, `.github/`, `src/` (`index.html`, `main.tsx`, `index.css`, `favicon.ico`), `package.json`, `bun.lock`, `README.md`, `LICENSE`, `.gitignore`. Папки `data/` нет ни в одном репозитории (check-scripts.ts её не пропускает): статические таблицы лежат внутри `scripts/update-data.ts`, JSON-состояние, которое updater пишет сам, лежит в `api/<feed>/` (Fidelity: `held-tickers.json`, `held-ticker-misses.json`), образцы для тестов маленькие и лежат внутри теста.
 
 `scripts/` содержит ровно три файла:
 
