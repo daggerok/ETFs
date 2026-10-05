@@ -1945,9 +1945,13 @@ function applyRestoredTab(): void {
 function renderTabs(): void {
   renderTabButtons(el.tabsBar, getTabs(), true);
   const selectedTabs = getSelectedTabs();
-  // The panel is always there (a hint while nothing is selected), so the page does not jump when the first ETF is selected or the last one cleared.
+  // The panel is always there, with the same buttons greyed out while nothing is selected, so the page does not jump when the first ETF is selected or the last one cleared.
   if (selectedTabs.length) renderTabButtons(el.selectedTabsBar, selectedTabs, true);
-  else el.selectedTabsBar.innerHTML = '<span class="selected-tabs-hint">Select an ETF with Use to open its Overview, Holdings, History and Watchlist here</span>';
+  else {
+    el.selectedTabsBar.classList.remove('hidden');
+    el.selectedTabsBar.innerHTML = [...DETAIL_TABS.map(tab => tab.label), 'Watchlist'].map(label =>
+      `<button type="button" disabled title="Select an ETF with Use to open this tab" class="px-3.5 py-1.5 rounded-full text-xs border whitespace-nowrap bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border-slate-200 dark:border-slate-700 opacity-50 cursor-not-allowed">${label}</button>`).join('');
+  }
 }
 
 function renderTabButtons(container: any, tabs: TabInfo[], alwaysShow: boolean): void {
@@ -2876,7 +2880,7 @@ function applySavedView(): void {
     if (stable < 3 && ++frames < 120) { requestAnimationFrame(step); return; }
     restoringViewTabs.delete(tab);
     settledViewTabs.add(tab);
-    restoreViewAnchor({ tab, top: 0, left: 0, cols: saved.cols, col: saved.col, colOffset: saved.colOffset, rows: saved.rows }, true);
+    restoreViewAnchor({ tab, top: 1, left: 0, cols: saved.cols, col: saved.col, colOffset: saved.colOffset, rows: saved.rows }, true);
   };
   requestAnimationFrame(step);
 }
