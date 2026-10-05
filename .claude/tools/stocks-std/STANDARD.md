@@ -5,7 +5,7 @@
 - It is NOT in `etf-std/registry.json`: that file drives the 29 ETF brand tables, the hub `BRANDS` list and tests that hard-code the brand count. Stocks has its own README tables (`## Exchanges table` instead of `## Brands table`, a one-row `## Sibling applications` pointing at the ETFs hub)
 - Feed: `api/stocks/index.json` with a `companies` array and `companies/<TICKER>/{meta.json,history/NNN.json}`; the row key is `metrics` with the stock metric set (see the README), plus mandatory `returnsBasis` and `performanceAsOf`
 - Controls: the ETF surface minus the fund-only ones (`AUM`, `TER`, `SEC_YIELD`, holdings and EDGAR controls), plus `EXCHANGES` and `MARKET_CAP`; `PERFORMANCE_*` is cumulative price change and `TOTAL_RETURN_*` cumulative adjusted return
-- Pages: standard deploy from `main` `/` (`build_type: legacy`), About topics `css csv finance github-pages html json static-api stocks typescript watchlist`
+- Pages: GitHub Actions (`build_type: workflow`, `.github/workflows/github-pages.yml`, Parcel build), About topics `css csv finance github-pages html json static-api stocks typescript watchlist`
 
 ## Regenerate and check
 
@@ -13,6 +13,7 @@
 cd .claude/tools/stocks-std
 bun ../etf-std/gen-workflow.ts spec.json > ../../../../Stocks/.github/workflows/update-data.yml   # never hand-edit the YAML
 bun ../etf-std/check-workflow.ts ../../../../Stocks
+bun ../etf-std/check-pages.ts ../../../../Stocks
 bun ../etf-std/check-scripts.ts ../../../../Stocks
 bun check-readme.ts ../../../../Stocks
 ```
