@@ -4072,12 +4072,8 @@ const RESET_ITEMS: { label: string; keys: string[]; reset(): void }[] = [
   { label: 'Sticky #', keys: [STICKY_RANK_KEY], reset: () => { state.stickyRank = false; } },
   { label: 'remembered table views', keys: [VIEW_KEY], reset: () => { savedViews = {}; settledViewTabs.clear(); restoringViewTabs.clear(); clearTimeout(saveViewTimer); } },
 ];
-const RESET_KEPT = ['blacklist', 'theme'];
-
-/** The Clear button: after one confirm, everything but the blacklist and the theme goes back to the first-visit view. */
+/** The Clear button: everything but the blacklist and the theme goes back to the first-visit view, no confirm dialog. */
 function clearSelectionAndSearch(): void {
-  const message = `Reset to the default view?\n\nWill be reset: ${RESET_ITEMS.map(item => item.label).join(', ')}\nWill be kept: ${RESET_KEPT.join(', ')}`;
-  if (!confirm(message)) return;
   RESET_ITEMS.forEach(item => { item.keys.forEach(lsRemove); item.reset(); });
   [brandDd, categoryDd, columnsDd].forEach(dd => dd?.close());
   filterTimers.forEach(timer => clearTimeout(timer));
