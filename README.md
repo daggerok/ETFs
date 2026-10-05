@@ -1,23 +1,26 @@
 # ETFs
 
-One of the app's features lets you select ETFs of any brand in the Watchlist and aggregate their holdings to see how often each ticker appears across the selected funds. Repeated holdings make overlapping exposure visible: the more selected funds include a ticker, the greater its potential influence on the portfolio; gains in that holding may help, while declines may hurt, and actual impact also depends on each fund's position size. Another feature makes it faster and easier to find funds with stronger growth over different periods, higher dividend yields or distributions, greater Total Return (price performance plus dividends), and other key performance metrics, across all brands at once: for example, sort every ETF of every brand by TR 1Y descending and build a Watchlist that mixes funds of different brands. A single-file client-side tool that reads the generated `api/<slug>` static feeds of the 29 sibling applications at runtime into one searchable ETF catalog with per-fund tabs, cross-brand watchlist aggregation, ticker copy and CSV/TXT export - the same look, feel, columns and business logic as the sibling applications, with no build step, no bundler, no dependencies, no data files and no aggregator
+One of the app's features lets you select ETFs of any brand in the Watchlist and aggregate their holdings to see how often each ticker appears across the selected funds. Repeated holdings make overlapping exposure visible: the more selected funds include a ticker, the greater its potential influence on the portfolio; gains in that holding may help, while declines may hurt, and actual impact also depends on each fund's position size. Another feature makes it faster and easier to find funds with stronger growth over different periods, higher dividend yields or distributions, greater Total Return (price performance plus dividends), and other key performance metrics, across all brands at once: for example, sort every ETF of every brand by TR 1Y descending and build a Watchlist that mixes funds of different brands. A client-side app that reads the generated `api/<slug>` static feeds of the 29 sibling applications at runtime into one searchable ETF catalog with per-fund tabs, cross-brand watchlist aggregation, ticker copy and CSV/TXT export - the same look, feel, columns and business logic as the sibling applications, built with Parcel and Tailwind CSS into a static `dist`, with no runtime dependencies, no data files and no aggregator
 
 ## Using Bun
 
 ```bash
 bunx degit daggerok/ETFs#main ./12345 && cd $_
-bunx serve . -p 1234
-open http://0:1234
+bun install
+bun run serve
 ```
 
-The application is published at <https://daggerok.github.io/ETFs/>. The Pages deployment comes only from `main`.
+`bun run serve` starts the Parcel dev server (it prints the local URL, `http://localhost:1234` by default). `bun run build` writes the static site to `dist`, `bun run build-github-pages` does the same with the `/ETFs/` public URL used on GitHub Pages
+
+The application is published at <https://daggerok.github.io/ETFs/>. The Pages deployment is made by `.github/workflows/github-pages.yml` (GitHub Actions) from `main`.
 
 The degit quick start gives only the hub files, so the data is loaded from the sibling applications' GitHub Pages feeds. For fully local data, clone the hub and the sibling repositories next to it:
 
 ```bash
 git clone https://github.com/daggerok/ETFs && cd ETFs
 ./scripts/install.sh --depth 1
-bunx serve . -p 1234
+bun install
+bun run serve
 ```
 
 `./scripts/install.sh` clones the 29 sibling repositories into subfolders of the hub folder (they are ignored by the hub's `.gitignore`):
@@ -39,7 +42,7 @@ Each brand repository publishes the standard feed `api/<slug>/index.json` plus p
 | Situation | Base URL |
 | --- | --- |
 | `location.hostname` ends with `github.io` | `https://daggerok.github.io/<Repo>/api/<slug>/` |
-| anything else, such as local `bunx serve . -p 1234` | `./<Repo>/api/<slug>/`, the sibling folder next to the hub; when that brand's `index.json` is missing or fails (for example after `degit`, where no sibling folders exist) the brand is retried from `https://daggerok.github.io/<Repo>/api/<slug>/`, and that base is then used for the brand's per-fund files too; such brands get a small `remote` badge in the brand filter |
+| anything else, such as local `bun run serve` | `./<Repo>/api/<slug>/`, the sibling folder next to the hub; when that brand's `index.json` is missing or fails (for example after `degit`, where no sibling folders exist) the brand is retried from `https://daggerok.github.io/<Repo>/api/<slug>/`, and that base is then used for the brand's per-fund files too; such brands get a small `remote` badge in the brand filter |
 | `?api=remote` | always `https://daggerok.github.io/<Repo>/api/<slug>/`, so local development can test production data |
 | `?api=local` | strictly `./<Repo>/api/<slug>/`, no fallback |
 
@@ -89,16 +92,18 @@ The Source badge reads `metrics.returnsBasis`: `NAV` when it starts with `offici
 
 ## TypeScript and verification
 
-The browser app is intentionally build-free: `index.html` carries the markup, styles and bootstrap, and `app.tsx` is TypeScript compiled in the browser with Babel standalone - no build step, no bundler, no `tsconfig.json` needed. Bun runs TypeScript out of the box.
+The browser app is built by Parcel: `src/index.html` carries the markup, `src/index.css` the Tailwind CSS v4 styles and `src/main.tsx` is the TypeScript entry. There is no `tsconfig.json`; Bun runs TypeScript out of the box.
 
 Verification before every publish:
 
 ```bash
-bun build --target=bun app.tsx --outfile=/dev/null
+bun install --frozen-lockfile
+bun run build
+bun build --target=bun src/main.tsx --outfile=/dev/null
 git diff --check
 ```
 
-The hub has no updater, tests, workflows or data files; the data is updated in the sibling repositories.
+The hub has no updater, tests, data files or data workflow (its only workflow publishes the Pages site); the data is updated in the sibling repositories.
 
 ## Brands table
 
