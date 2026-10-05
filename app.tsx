@@ -1945,8 +1945,9 @@ function applyRestoredTab(): void {
 function renderTabs(): void {
   renderTabButtons(el.tabsBar, getTabs(), true);
   const selectedTabs = getSelectedTabs();
-  el.selectedTabsPanel.classList.toggle('is-visible', selectedTabs.length > 0);
-  renderTabButtons(el.selectedTabsBar, selectedTabs, false);
+  // The panel is always there (a hint while nothing is selected), so the page does not jump when the first ETF is selected or the last one cleared.
+  if (selectedTabs.length) renderTabButtons(el.selectedTabsBar, selectedTabs, true);
+  else el.selectedTabsBar.innerHTML = '<span class="selected-tabs-hint">Select an ETF with Use to open its Overview, Holdings, History and Watchlist here</span>';
 }
 
 function renderTabButtons(container: any, tabs: TabInfo[], alwaysShow: boolean): void {
