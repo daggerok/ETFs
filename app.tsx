@@ -223,6 +223,8 @@ const el = {
   tableHead: byId('table-head'),
   tableBody: byId('table-body'),
   tableScroll: byId('table-scroll'),
+  busyOverlay: byId('busy-overlay'),
+  busyLabel: byId('busy-label'),
   staticLoadSentinel: byId('static-load-sentinel'),
   staticLoadStatus: byId('static-load-status'),
 };
@@ -1539,7 +1541,7 @@ function scheduleWatchlistRefresh(): void {
   watchlistRefreshTimer = setTimeout(() => {
     watchlistRefreshTimer = null;
     if (state.activeTab === 'watchlist') { renderTabs(); renderWatchlistTable(); }
-  }, 150);
+  }, 500);
 }
 
 function activeSheetTab(): 'holdings' | 'history' | null {
@@ -1897,7 +1899,7 @@ function getSelectedTabs(): TabInfo[] {
   }
 
   if (selectedKeys().length > 0) {
-    const rowCount = getDedupedWatchlistRows().length;
+    const rowCount = watchlistTabCount();
     // While holdings are still loading, never show a misleading exact count.
     const incomplete = isHoldingsLoading() || selectedKeys().some(key => !holdingsComplete.has(key));
     const count = incomplete ? (rowCount ? `${rowCount}+` : isHoldingsLoading() ? 'Loading…' : 0) : rowCount;
@@ -1943,8 +1945,9 @@ function applyRestoredTab(): void {
 function renderTabs(): void {
   renderTabButtons(el.tabsBar, getTabs(), true);
   const selectedTabs = getSelectedTabs();
-  el.selectedTabsPanel.classList.toggle('is-visible', selectedTabs.length > 0);
-  renderTabButtons(el.selectedTabsBar, selectedTabs, false);
+  // The panel is always there (a hint while nothing is selected), so the page does not jump when the first ETF is selected or the last one cleared.
+  if (selectedTabs.length) renderTabButtons(el.selectedTabsBar, selectedTabs, true);
+  else el.selectedTabsBar.innerHTML = '<span class="selected-tabs-hint">Select an ETF with Use to open its Overview, Holdings, History and Watchlist here</span>';
 }
 
 function renderTabButtons(container: any, tabs: TabInfo[], alwaysShow: boolean): void {
@@ -2064,7 +2067,7 @@ let categoryItems: DropdownItem[] = [];
 function applyBrandSelection(selected: Set<string>): void {
   state.hiddenBrands = new Set(BRANDS.map(brand => brand.repo).filter(repo => !selected.has(repo)));
   persistViewFilters();
-  render();
+  renderBusy();
 }
 
 function applyCategorySelection(selected: Set<string>): void {
@@ -2072,7 +2075,7 @@ function applyCategorySelection(selected: Set<string>): void {
   const unseen = [...state.hiddenCategories].filter(name => !known.has(name)); // categories of brands not loaded yet stay hidden
   state.hiddenCategories = new Set([...categoryItems.map(item => item.id).filter(name => !selected.has(name)), ...unseen]);
   persistViewFilters();
-  render();
+  renderBusy();
 }
 
 function filterSummary(selected: number, total: number): string {
@@ -2187,7 +2190,7 @@ function setCatalogColumnStyle(on: boolean): void {
 function applyColumnSelection(selected: Set<string>): void {
   state.hiddenCols = new Set(menuColumns().filter(col => !col.locked && !selected.has(col.key)).map(col => col.key));
   persistViewFilters();
-  setCatalogColumnStyle(true);
+  withBusy('Updating the columns…', () => setCatalogColumnStyle(true));
 }
 
 function renderBrandList(): void {
@@ -2696,6 +2699,37 @@ function initSearchSuggest(): void {
 }
 
 
+// ---- busy overlay: spinner over the table while heavy work blocks the page ----
+
+let busyCount = 0;
+
+function setBusy(on: boolean, label = ''): void {
+  busyCount = Math.max(0, busyCount + (on ? 1 : -1));
+  if (on && label) el.busyLabel.textContent = label;
+  el.busyOverlay.hidden = busyCount === 0;
+}
+
+/** Shows the spinner (CSS delays it ~150 ms, so quick work never flashes it), lets it paint, then runs the blocking work. */
+function withBusy(label: string, work: () => void): void {
+  setBusy(true, label);
+  requestAnimationFrame(() => setTimeout(() => {
+    try {
+      work();
+      void el.tableScroll.offsetHeight; // layout of the new rows happens now, under the spinner
+    } finally {
+      requestAnimationFrame(() => setTimeout(() => setBusy(false), 0));
+    }
+  }, 0));
+}
+
+/** A user action that re-renders the whole table: the spinner shows while it runs (only if it takes longer than a blink). */
+function renderBusy(keepRows = true, after?: () => void): void {
+  withBusy('Updating the table…', () => {
+    render(keepRows);
+    if (after) after();
+  });
+}
+
 // =========================================================================
 // 7. Table rendering, sorting & tooltips
 // =========================================================================
@@ -2992,7 +3026,7 @@ function bindSortHeaders(): void {
         state.sortDir = ASC_FIRST_KEYS.includes(key) ? 'asc' : 'desc';
       }
       rememberSortForCurrentTab();
-      render(false);
+      renderBusy(false);
     });
   });
 }
@@ -3315,16 +3349,18 @@ function syncHeadHeight(): void {
 
 /** Re-renders the table after a filter change and puts the caret back into the filter input that was being edited. */
 function rerenderKeepingFilterFocus(): void {
-  const active: any = document.activeElement;
-  const key = active && active.dataset ? active.dataset.filterCol : undefined;
-  const scope = active && active.dataset ? active.dataset.filterScope : undefined;
-  const caret = key !== undefined && typeof active.selectionStart === 'number' ? active.selectionStart : 0;
-  suppressTableAnimation = true;
-  render();
-  suppressTableAnimation = false;
-  if (key === undefined) return;
-  const next: any = [...el.tableHead.querySelectorAll('input[data-filter-col]')].find((node: any) => node.dataset.filterCol === key && node.dataset.filterScope === scope);
-  if (next) { next.focus(); try { next.setSelectionRange(caret, caret); } catch { /* not a text input */ } }
+  withBusy('Applying the filter…', () => {
+    const active: any = document.activeElement; // read when the work runs, so a key typed meanwhile keeps its caret
+    const key = active && active.dataset ? active.dataset.filterCol : undefined;
+    const scope = active && active.dataset ? active.dataset.filterScope : undefined;
+    const caret = key !== undefined && typeof active.selectionStart === 'number' ? active.selectionStart : 0;
+    suppressTableAnimation = true;
+    render();
+    suppressTableAnimation = false;
+    if (key === undefined) return;
+    const next: any = [...el.tableHead.querySelectorAll('input[data-filter-col]')].find((node: any) => node.dataset.filterCol === key && node.dataset.filterScope === scope);
+    if (next) { next.focus(); try { next.setSelectionRange(caret, caret); } catch { /* not a text input */ } }
+  });
 }
 
 const filterTimers: Map<string, any> = new Map();
@@ -3358,7 +3394,7 @@ function clearAllFilters(scope: string): void {
   filterTimers.clear();
   state.filters[scope] = {};
   persistColumnFilters();
-  render();
+  renderBusy();
 }
 
 function detectedTypeFor(scope: string, key: string): ColType {
@@ -3381,7 +3417,7 @@ function cycleColumnType(scope: string, key: string, reset: boolean): void {
   else map[key] = next;
   state.typeOverrides[scope] = map;
   persistColumnTypes();
-  render();
+  renderBusy();
 }
 
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -3463,13 +3499,36 @@ function sheetPositions(key: string): HoldingPosition[] {
 
 let watchlistCache: { signature: string; rows: WatchlistRow[] } | null = null;
 
+function watchlistSignature(keys: string[]): string {
+  return keys.join('|') + '#' + keys.map(key => (sheetState.get(`${key}:holdings`)?.rows.length ?? 0)).join(',');
+}
+
+let watchlistCountShown = 0;
+let watchlistCountTimer: any = null;
+
+/**
+ * Row count for the Watchlist tab label. The dedupe over every holding of every selected ETF is the heaviest
+ * computation of the page, so it never runs on the click path: a stale count is shown until it is rebuilt
+ * once (under the spinner) after holdings stopped loading. On the Watchlist tab itself the table needs the rows anyway.
+ */
+function watchlistTabCount(): number {
+  if (state.activeTab === 'watchlist') return (watchlistCountShown = getDedupedWatchlistRows().length);
+  const keys = selectedKeys().sort();
+  if (watchlistCache && watchlistCache.signature === watchlistSignature(keys)) return (watchlistCountShown = watchlistCache.rows.length);
+  if (watchlistCountTimer === null) {
+    watchlistCountTimer = setTimeout(() => {
+      watchlistCountTimer = null;
+      if (isHoldingsLoading()) return; // ensureHoldingsForSelection renders the tabs again when it is done
+      withBusy('Counting watchlist rows…', () => { getDedupedWatchlistRows(); renderTabs(); });
+    }, 400);
+  }
+  return watchlistCountShown;
+}
+
 function getDedupedWatchlistRows(): WatchlistRow[] {
   // Memoized: recomputed only when the selection or the loaded row counts change.
   const keys = selectedKeys().sort();
-  const signature =
-    keys.join('|') +
-    '#' +
-    keys.map(key => (sheetState.get(`${key}:holdings`)?.rows.length ?? 0)).join(',');
+  const signature = watchlistSignature(keys);
   if (watchlistCache && watchlistCache.signature === signature) return watchlistCache.rows;
 
   const map: Map<string, WatchlistRow> = new Map();
@@ -3965,12 +4024,14 @@ function toggleVisibleSelection(selectAll: boolean): void {
     const fresh = ids.filter(id => !state.selected.has(store ? store.keys[id] : '')).length;
     if (!confirmBulk(fresh)) { render(); return; }
   }
-  ids.forEach(id => {
-    const key = store ? store.keys[id] : '';
-    if (selectAll) state.selected.add(key);
-    else state.selected.delete(key);
+  withBusy(selectAll ? 'Selecting ETFs…' : 'Clearing the selection…', () => {
+    ids.forEach(id => {
+      const key = store ? store.keys[id] : '';
+      if (selectAll) state.selected.add(key);
+      else state.selected.delete(key);
+    });
+    afterSelectionChange();
   });
-  afterSelectionChange();
 }
 
 /** All ETFs pill checkbox: every non-blacklisted ETF of every brand, from any tab. */
@@ -3981,12 +4042,14 @@ function toggleAllCatalogEtfs(selectAll: boolean): void {
     const fresh = ids.filter(id => !state.selected.has(store ? store.keys[id] : '')).length;
     if (!confirmBulk(fresh)) { render(); return; }
   }
-  ids.forEach(id => {
-    const key = store ? store.keys[id] : '';
-    if (selectAll) state.selected.add(key);
-    else state.selected.delete(key);
+  withBusy(selectAll ? 'Selecting ETFs…' : 'Clearing the selection…', () => {
+    ids.forEach(id => {
+      const key = store ? store.keys[id] : '';
+      if (selectAll) state.selected.add(key);
+      else state.selected.delete(key);
+    });
+    afterSelectionChange();
   });
-  afterSelectionChange();
 }
 
 function activateFund(key: string): void {
@@ -4019,12 +4082,8 @@ const RESET_ITEMS: { label: string; keys: string[]; reset(): void }[] = [
   { label: 'Sticky #', keys: [STICKY_RANK_KEY], reset: () => { state.stickyRank = false; } },
   { label: 'remembered table views', keys: [VIEW_KEY], reset: () => { savedViews = {}; settledViewTabs.clear(); restoringViewTabs.clear(); clearTimeout(saveViewTimer); } },
 ];
-const RESET_KEPT = ['blacklist', 'theme'];
-
-/** The Clear button: after one confirm, everything but the blacklist and the theme goes back to the first-visit view. */
+/** The Clear button: everything but the blacklist and the theme goes back to the first-visit view, no confirm dialog. */
 function clearSelectionAndSearch(): void {
-  const message = `Reset to the default view?\n\nWill be reset: ${RESET_ITEMS.map(item => item.label).join(', ')}\nWill be kept: ${RESET_KEPT.join(', ')}`;
-  if (!confirm(message)) return;
   RESET_ITEMS.forEach(item => { item.keys.forEach(lsRemove); item.reset(); });
   [brandDd, categoryDd, columnsDd].forEach(dd => dd?.close());
   filterTimers.forEach(timer => clearTimeout(timer));
@@ -4459,12 +4518,12 @@ function bindEvents(): void {
   el.filtersBtn.addEventListener('click', () => {
     state.showFilters = !state.showFilters;
     lsSet(SHOW_FILTERS_KEY, String(state.showFilters));
-    render();
+    renderBusy();
   });
   el.rankBtn.addEventListener('click', () => {
     state.stickyRank = !state.stickyRank;
     lsSet(STICKY_RANK_KEY, String(state.stickyRank));
-    render();
+    renderBusy();
   });
   el.clearFiltersBtn.addEventListener('click', () => {
     const scope = currentFilterScope();
@@ -4520,14 +4579,14 @@ function bindEvents(): void {
   el.staleToggle.addEventListener('change', () => {
     state.hideStale = Boolean(el.staleToggle.checked);
     persistViewFilters();
-    render();
+    renderBusy();
   });
   el.staleDays.addEventListener('input', () => {
     const days = Math.floor(Number(el.staleDays.value));
     if (!Number.isFinite(days) || days < 1 || days > 3650) return;
     state.staleDays = days;
     persistViewFilters();
-    render();
+    renderBusy();
   });
 
   // Delegated table events (the catalog mounts hundreds of rows).
