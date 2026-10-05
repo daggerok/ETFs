@@ -102,7 +102,7 @@ note('CDP typing keeps focus', (await ev(`document.activeElement.dataset.filterC
 check('CDP typed filter', await catIds(), K((f) => f.ticker.toLowerCase().includes('sp')));
 // badge cycle, persist, reset
 await apply({});
-await ev(`document.querySelector('button[data-type-col=aumValue]').click()`);
+await ev(`document.querySelector('button[data-type-col=aumValue]').click()`); await Bun.sleep(300); // the render runs one frame later, under the spinner
 note('badge cycles', (await ev(`document.querySelector('button[data-type-col=aumValue]').textContent`)) !== '$' && (await ev(`localStorage.getItem('etf-hub-column-types')`)).includes('aumValue'));
 await ev(`document.querySelector('button[data-type-col=aumValue]').dispatchEvent(new MouseEvent('click', { bubbles: true, shiftKey: true }))`);
 note('shift+click resets', (await ev(`localStorage.getItem('etf-hub-column-types')`)) === null && (await ev(`document.querySelector('button[data-type-col=aumValue]').textContent`)) === '$');
@@ -116,9 +116,9 @@ await ev(`localStorage.setItem('etf-hub-column-filters', '{"catalog":'); localSt
 await send('Page.reload'); await b.waitReady(); await Bun.sleep(600);
 note('unparsable stored value ignored', (await ev(`Object.keys(state.filters).length`)) === 0);
 // hide filters button
-await ev(`document.getElementById('filters-btn').click()`);
+await ev(`document.getElementById('filters-btn').click()`); await Bun.sleep(300);
 note('filters button hides the row', (await ev(`document.querySelectorAll('tr.filter-row').length`)) === 0 && (await ev(`localStorage.getItem('etf-hub-show-filters')`)) === 'false');
-await ev(`document.getElementById('filters-btn').click()`);
+await ev(`document.getElementById('filters-btn').click()`); await Bun.sleep(300);
 note('filters button shows the row', (await ev(`document.querySelectorAll('tr.filter-row').length`)) === 1);
 // performance on 2500+ rows
 const perf: any = await ev(`(() => {

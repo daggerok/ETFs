@@ -2067,7 +2067,7 @@ let categoryItems: DropdownItem[] = [];
 function applyBrandSelection(selected: Set<string>): void {
   state.hiddenBrands = new Set(BRANDS.map(brand => brand.repo).filter(repo => !selected.has(repo)));
   persistViewFilters();
-  render();
+  renderBusy();
 }
 
 function applyCategorySelection(selected: Set<string>): void {
@@ -2075,7 +2075,7 @@ function applyCategorySelection(selected: Set<string>): void {
   const unseen = [...state.hiddenCategories].filter(name => !known.has(name)); // categories of brands not loaded yet stay hidden
   state.hiddenCategories = new Set([...categoryItems.map(item => item.id).filter(name => !selected.has(name)), ...unseen]);
   persistViewFilters();
-  render();
+  renderBusy();
 }
 
 function filterSummary(selected: number, total: number): string {
@@ -2190,7 +2190,7 @@ function setCatalogColumnStyle(on: boolean): void {
 function applyColumnSelection(selected: Set<string>): void {
   state.hiddenCols = new Set(menuColumns().filter(col => !col.locked && !selected.has(col.key)).map(col => col.key));
   persistViewFilters();
-  setCatalogColumnStyle(true);
+  withBusy('Updating the columns…', () => setCatalogColumnStyle(true));
 }
 
 function renderBrandList(): void {
@@ -2722,6 +2722,14 @@ function withBusy(label: string, work: () => void): void {
   }, 0));
 }
 
+/** A user action that re-renders the whole table: the spinner shows while it runs (only if it takes longer than a blink). */
+function renderBusy(keepRows = true, after?: () => void): void {
+  withBusy('Updating the table…', () => {
+    render(keepRows);
+    if (after) after();
+  });
+}
+
 // =========================================================================
 // 7. Table rendering, sorting & tooltips
 // =========================================================================
@@ -3018,7 +3026,7 @@ function bindSortHeaders(): void {
         state.sortDir = ASC_FIRST_KEYS.includes(key) ? 'asc' : 'desc';
       }
       rememberSortForCurrentTab();
-      render(false);
+      renderBusy(false);
     });
   });
 }
@@ -3341,16 +3349,18 @@ function syncHeadHeight(): void {
 
 /** Re-renders the table after a filter change and puts the caret back into the filter input that was being edited. */
 function rerenderKeepingFilterFocus(): void {
-  const active: any = document.activeElement;
-  const key = active && active.dataset ? active.dataset.filterCol : undefined;
-  const scope = active && active.dataset ? active.dataset.filterScope : undefined;
-  const caret = key !== undefined && typeof active.selectionStart === 'number' ? active.selectionStart : 0;
-  suppressTableAnimation = true;
-  render();
-  suppressTableAnimation = false;
-  if (key === undefined) return;
-  const next: any = [...el.tableHead.querySelectorAll('input[data-filter-col]')].find((node: any) => node.dataset.filterCol === key && node.dataset.filterScope === scope);
-  if (next) { next.focus(); try { next.setSelectionRange(caret, caret); } catch { /* not a text input */ } }
+  withBusy('Applying the filter…', () => {
+    const active: any = document.activeElement; // read when the work runs, so a key typed meanwhile keeps its caret
+    const key = active && active.dataset ? active.dataset.filterCol : undefined;
+    const scope = active && active.dataset ? active.dataset.filterScope : undefined;
+    const caret = key !== undefined && typeof active.selectionStart === 'number' ? active.selectionStart : 0;
+    suppressTableAnimation = true;
+    render();
+    suppressTableAnimation = false;
+    if (key === undefined) return;
+    const next: any = [...el.tableHead.querySelectorAll('input[data-filter-col]')].find((node: any) => node.dataset.filterCol === key && node.dataset.filterScope === scope);
+    if (next) { next.focus(); try { next.setSelectionRange(caret, caret); } catch { /* not a text input */ } }
+  });
 }
 
 const filterTimers: Map<string, any> = new Map();
@@ -3384,7 +3394,7 @@ function clearAllFilters(scope: string): void {
   filterTimers.clear();
   state.filters[scope] = {};
   persistColumnFilters();
-  render();
+  renderBusy();
 }
 
 function detectedTypeFor(scope: string, key: string): ColType {
@@ -3407,7 +3417,7 @@ function cycleColumnType(scope: string, key: string, reset: boolean): void {
   else map[key] = next;
   state.typeOverrides[scope] = map;
   persistColumnTypes();
-  render();
+  renderBusy();
 }
 
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -4508,12 +4518,12 @@ function bindEvents(): void {
   el.filtersBtn.addEventListener('click', () => {
     state.showFilters = !state.showFilters;
     lsSet(SHOW_FILTERS_KEY, String(state.showFilters));
-    render();
+    renderBusy();
   });
   el.rankBtn.addEventListener('click', () => {
     state.stickyRank = !state.stickyRank;
     lsSet(STICKY_RANK_KEY, String(state.stickyRank));
-    render();
+    renderBusy();
   });
   el.clearFiltersBtn.addEventListener('click', () => {
     const scope = currentFilterScope();
@@ -4569,14 +4579,14 @@ function bindEvents(): void {
   el.staleToggle.addEventListener('change', () => {
     state.hideStale = Boolean(el.staleToggle.checked);
     persistViewFilters();
-    render();
+    renderBusy();
   });
   el.staleDays.addEventListener('input', () => {
     const days = Math.floor(Number(el.staleDays.value));
     if (!Number.isFinite(days) || days < 1 || days > 3650) return;
     state.staleDays = days;
     persistViewFilters();
-    render();
+    renderBusy();
   });
 
   // Delegated table events (the catalog mounts hundreds of rows).
