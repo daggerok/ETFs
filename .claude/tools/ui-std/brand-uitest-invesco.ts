@@ -22,7 +22,7 @@ let pass = 0, fail = 0;
 const set = (a: any[]) => [...a].sort().join(',');
 const check = (name: string, got: any[], want: any[]) => { if (set(got) === set(want)) pass++; else { fail++; console.log('FAIL', name, '\n  got ', set(got).slice(0, 200), `(${got.length})`, '\n  want', set(want).slice(0, 200), `(${want.length})`); } };
 const note = (name: string, ok: boolean, extra = '') => { if (ok) pass++; else { fail++; console.log('FAIL', name, extra); } };
-const funds: any[] = await ev(`state.funds.map(f => ({ ticker: f.ticker, name: f.name, category: f.category, aumValue: f.aumValue, terValue: f.terValue, ytd: f.ytd, yr1: f.yr1, secYield: f.secYield, inceptionDate: f.inceptionDate, dividendFrequency: f.dividendFrequency, frequencyCode: f.frequencyCode, holdings: f.holdings }))`);
+const funds: any[] = await ev(`state.funds.map(f => ({ ticker: f.ticker, name: f.name, category: f.category, aumValue: f.aumValue, terValue: f.terValue, ytd: f.ytd, yr1: f.yr1, secYield: f.secYield, inceptionDate: f.inceptionDate, dividendFrequency: f.dividendFrequency, holdings: f.holdings }))`);
 console.log('funds:', funds.length);
 const apply = async (key: string, expr: string, override?: string) => {
   await ev(`(() => { state.activeTab = 'All'; columnFilterState.filters = { catalog: ${JSON.stringify({ [key]: expr })} }; columnFilterState.typeOverrides = ${override ? JSON.stringify({ catalog: { [key]: override } }) : '{}'}; render(); return 1; })()`);
@@ -46,7 +46,7 @@ check('secYield ?', await apply('secYield', '?'), T((f) => f.secYield === null |
 check('ticker ^s', await apply('ticker', '^s'), T((f) => f.ticker.toLowerCase().startsWith('s')));
 check('name etf, trust', await apply('name', 'etf, trust'), T((f) => /etf|trust/i.test(f.name)));
 check('category !equit', await apply('category', '!equit'), T((f) => !(f.category || '').toLowerCase().includes('equit')));
-check('freq none', await apply('frequencyCode', 'none'), T((f) => (f.frequencyCode || '').toLowerCase().includes('none')));
+check('freq monthly', await apply('dividendFrequency', 'monthly'), T((f) => (f.dividendFrequency || '').toLowerCase().includes('monthly')));
 check('ticker regex', await apply('ticker', '/^(a|b)/'), T((f) => /^(a|b)/i.test(f.ticker)));
 // dates (the inception date)
 const ts = (s: string) => Date.parse(s);
