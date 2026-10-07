@@ -40,7 +40,7 @@
 
 `scripts/update-data.ts` начинается с `#!/usr/bin/env bun` и имеет git-режим 100755 (`git update-index --chmod=+x scripts/update-data.ts`).
 
-Dependabot одинаков везде (эталон `tools/dependabot.ref`): bun и github-actions, каталог `/`, раз в месяц, лимит PR 10.
+Dependabot одинаков везде (эталон `tools/dependabot.ref`): bun и github-actions, каталог `/`, раз в месяц, лимит PR 10. Исключение: если `bun.lock` имеет `lockfileVersion` 2, экосистема `bun` у Dependabot падает (`Unsupported bun.lock 'lockfileVersion' 2`, парсер знает только 1), там вместо `bun` стоит `npm` (PR меняют только `package.json`, `bun.lock` обновляется вручную через `bun install`). Таких репозиториев 8: Stocks, ETFs, AAM, Northern-Trust, SP-Funds, Sprott, Xtrackers, aberdeen
 
 ## 3. Настройки updater (контролы)
 
