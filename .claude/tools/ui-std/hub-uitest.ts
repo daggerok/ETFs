@@ -1,7 +1,7 @@
 import { open } from './lib';
 const ROLL = process.argv[2];
 const OUT = process.argv[3] ?? '/tmp';
-const b = await open(ROLL, '1270');
+const b = await open(ROLL, process.argv[4] ?? '1270');
 const { ev, send } = b;
 console.log('ready', await b.waitReady());
 let pass = 0, fail = 0;
@@ -19,7 +19,7 @@ const one = (key: string, expr: string, ov?: string) => apply({ catalog: { [key]
 // headers
 await apply({});
 const nCols = await ev(`CATALOG_COLUMNS.length`);
-note('column count 25', nCols === 25);
+note('column count follows the header', nCols > 0 && (await ev(`document.querySelectorAll('#table-head tr:first-child th').length`)) === nCols + 2);
 note('every catalog header has a badge', (await ev(`document.querySelectorAll('#table-head tr:first-child .type-badge').length`)) === nCols);
 note('every catalog header has a filter input', (await ev(`document.querySelectorAll('#table-head tr.filter-row input[data-filter-col]').length`)) === nCols);
 note('header sort keys equal filter keys', (await ev(`[...document.querySelectorAll('#table-head button[data-sort]')].map(x => x.dataset.sort).join()`)) === (await ev(`[...document.querySelectorAll('#table-head input[data-filter-col]')].map(x => x.dataset.filterCol).join()`)));
@@ -59,7 +59,7 @@ note('invalid flagged', await ev(`document.querySelector('input[data-filter-col=
 const combined = K((f) => num(f.aum) && f.aum > 1e9 && num(f.tr1y) && f.tr1y > 0);
 check('combined', await apply({ catalog: { aumValue: '>1B', tr1y: '>0' } }), combined);
 check('table rows are the first chunk of the filtered ids', (await ev(`[...document.querySelectorAll('#table-body tr[data-key]')].map(r => r.dataset.key)`)) as string[], combined.slice(0, 0).concat((await catIds()).slice(0, 200)));
-check('export rows follow the filters', (await ev(`currentExportRows().rows.map(r => r[1])`)) as string[], funds.filter((f) => combined.includes(f.key)).map((f) => f.ticker));
+check('export rows follow the filters', (await ev(`currentExportRows().rows.map(r => r[2])`)) as string[], funds.filter((f) => combined.includes(f.key)).map((f) => f.ticker));
 note('subtitle/ticker count follows filters', (await ev(`document.getElementById('ticker-count').textContent`)) === `${combined.length.toLocaleString('en-US')} ETFs`, await ev(`document.getElementById('ticker-count').textContent`));
 note('toolbar badge 2 + clear visible', (await ev(`document.getElementById('filters-badge').textContent`)) === '2' && !(await ev(`document.getElementById('clear-filters-btn').hidden`)));
 // select-all follows the filters (a small filtered set: no bulk confirm, few holdings requests)
@@ -104,7 +104,7 @@ check('CDP typed filter', await catIds(), K((f) => f.ticker.toLowerCase().includ
 await apply({});
 await ev(`document.querySelector('button[data-type-col=aumValue]').click()`); await Bun.sleep(300); // the render runs one frame later, under the spinner
 note('badge cycles', (await ev(`document.querySelector('button[data-type-col=aumValue]').textContent`)) !== '$' && (await ev(`localStorage.getItem('etf-hub-column-types')`)).includes('aumValue'));
-await ev(`document.querySelector('button[data-type-col=aumValue]').dispatchEvent(new MouseEvent('click', { bubbles: true, shiftKey: true }))`);
+await ev(`document.querySelector('button[data-type-col=aumValue]').dispatchEvent(new MouseEvent('click', { bubbles: true, shiftKey: true }))`); await Bun.sleep(300);
 note('shift+click resets', (await ev(`localStorage.getItem('etf-hub-column-types')`)) === null && (await ev(`document.querySelector('button[data-type-col=aumValue]').textContent`)) === '$');
 // reload persistence (also an old PR #31 value must be ignored)
 await ev(`localStorage.setItem('etf-hub-column-filters', JSON.stringify({ catalog: { aumValue: '>1B' }, All: { aumValue: { conditions: [{ op: 'gt', v: '1' }] } } })); localStorage.setItem('etf-hub-column-types', JSON.stringify({ catalog: { aumValue: 'string' } })); 1`);
@@ -222,7 +222,9 @@ await ev(`(() => { state.filters = {}; const t = document.querySelector('[data-t
 await Bun.sleep(500);
 note('overview has no filter row and a disabled button', (await ev(`document.querySelectorAll('tr.filter-row').length`)) === 0 && (await ev(`document.getElementById('filters-btn').disabled`)));
 // sticky, light and dark
-await ev(`(() => { state.activeTab = 'All'; state.filters = { catalog: { aumValue: '>1B' } }; render(); const sc = document.getElementById('table-scroll'); sc.scrollTop = 400; sc.scrollLeft = 300; return 1; })()`);
+await ev(`(() => { state.activeTab = 'All'; state.filters = { catalog: { aumValue: '>1B' } }; render(); return 1; })()`);
+await Bun.sleep(500);
+await ev(`(() => { const sc = document.getElementById('table-scroll'); sc.scrollTop = 400; sc.scrollLeft = 300; return 1; })()`);
 await Bun.sleep(500);
 const sticky = async (label: string) => {
   const r: any = JSON.parse(await ev(`(() => { const sc = document.getElementById('table-scroll').getBoundingClientRect(); const h = document.querySelector('#table-head tr:first-child th').getBoundingClientRect(); const f = document.querySelector('#table-head tr.filter-row th').getBoundingClientRect(); const pin = document.querySelector('#table-head tr.filter-row th.catalog-sticky-use').getBoundingClientRect(); const tk = document.querySelector('#table-head tr.filter-row th.catalog-sticky-ticker').getBoundingClientRect(); const hh = document.querySelector('#table-head tr:first-child').getBoundingClientRect().height; return JSON.stringify({ headTop: Math.round(h.top - sc.top), filterTop: Math.round(f.top - sc.top), headH: Math.round(hh), pinTop: Math.round(pin.top - sc.top), pinLeft: Math.round(pin.left - sc.left), tickerLeft: Math.round(tk.left - sc.left), tickerTop: Math.round(tk.top - sc.top) }); })()`));
