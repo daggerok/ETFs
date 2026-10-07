@@ -16,7 +16,7 @@ Applies to every `src/main.tsx` / `src/index.html` / `src/index.css` in the 29 b
 ## Footer (all ETF repos, Stocks and gex, owner 2026-10-07)
 - Same footer as the `gex` repo: a centered link `daggerok &copy; <current year>` (the year is set at run time by an inline script, id `footer-year`) that opens the repository of the app (`https://github.com/daggerok/<Repo>`), 10px text, `text-slate-400`, dotted underline
 - Spacing follows the side gutter of the site (header and `main` use `px-4 sm:px-8`): the footer uses the same side padding, and its text line plus the bottom padding add up to one gutter (`pb-[3.5px] sm:pb-[19.5px]` for a 12.5px line: 16px, 32px from `sm`). Whatever the footer content is (the hub keeps its disclaimer above the link line), the box model stays the same. In `gex` the footer shows on Desk and GEX, the Chart tab keeps the TradingView notice
-- Brand apps: the footer sits right after `</main>` inside the page container; `bun .claude/tools/...` has no script for it any more, edit `src/index.html` in every repo when it changes
+- Brand apps: the footer sits right after `</main>` inside the page container; when it changes, edit `src/index.html` in every repo (a small Bun script with exactly-one-match replacements, then a browser check of the paddings)
 
 ## Wide catalog tables
 Fidelity, SPDR and WisdomTree have `min-width:max-content` in the `#table-scroll table{...}` rule of `src/index.css` (without it their columns squeeze and overlap). Do NOT add it to the other brands: it widens their columns and pushes columns out of the view (measured on AAM and Schwab, 3-4% of the pixels change). Everything else in `src/index.css` is the same file in all repos.
