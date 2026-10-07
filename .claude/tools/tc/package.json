@@ -1,0 +1,8 @@
+{
+  "name": "etf-tc",
+  "private": true,
+  "description": "type checker that mirrors the IDE for the ETF repos, used only through check.sh, never added to a repo",
+  "dependencies": {
+    "typescript": "^7.0.2"
+  }
+}
