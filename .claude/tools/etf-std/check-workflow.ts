@@ -20,6 +20,9 @@ for (const d of process.argv.slice(2)) {
   if (/\$\{\{\s*(inputs|github\.event\.inputs)\./.test(txt)) errs.push('direct input interpolation in workflow');
   const add = txt.match(/git add (api\/[a-z0-9-]+)\b/); if (!add) errs.push('git add api/<slug> missing'); else if (!txt.includes(`git diff --cached --quiet -- ${add[1]}`)) errs.push('commit step not scoped/no-op-safe');
   if (/(^|\s)(OUTPUT_DIR|OUT_DIR)\s*:/m.test(txt) || names.some(n => /out(put)?_?dir/i.test(n))) errs.push('output dir must not be exposed as input');
+  if (on?.push) errs.push('the update workflow must not run on push (only schedule and workflow_dispatch)');
+  if (names.includes('sec_ua') && !txt.includes('PROTECTED_SEC_UA: ${{ vars.SEC_UA }}')) errs.push('SEC_UA input needs the protected repository variable PROTECTED_SEC_UA: ${{ vars.SEC_UA }}');
+  const apiDirs = new Set(txt.match(/api\/[\w-]+/g) ?? []); if (apiDirs.size > 1) errs.push(`the workflow touches more than one feed dir: ${[...apiDirs].join(', ')}`);
   if (!/persist-credentials: false/.test(txt)) errs.push('checkout must set persist-credentials: false');
   if (!/timeout-minutes: 30/.test(txt)) errs.push('timeout-minutes: 30 missing');
   if (!txt.includes("credential.helper='!f()") || !txt.includes('GITHUB_TOKEN: ${{ github.token }}')) errs.push('runtime-only token push missing');
