@@ -139,7 +139,7 @@ GitHub разрешает максимум 25 входов `workflow_dispatch`: 
 
 Порядок разделов одинаков везде: заголовок и описание, `## Using Bun`, `## Updating the static <X> data` (внутри `### Data sources`, `### Metrics and caveats`, `### Update controls`, `### Examples`), `## TypeScript and verification`, `## Brands table`, `## Sibling applications`, `## License` (MIT и оговорка о независимости от эмитента).
 
-Таблица контролов совпадает с конфигом, `--help` и `CONTROL_NAMES` (это проверяет тест). Раздел проверки содержит ровно четыре команды: `bun install --frozen-lockfile`, `bun test`, `bun build --target=bun scripts/update-data.ts --outfile=/dev/null`, `git diff --check`.
+Таблица контролов совпадает с конфигом, `--help` и `CONTROL_NAMES`. Раздел проверки содержит ровно четыре команды: `bun install --frozen-lockfile`, `bun test`, `bun build --target=bun scripts/update-data.ts --outfile=/dev/null`, `git diff --check`.
 
 Две таблицы брендов - один канонический блок из `registry.json`. Вручную их править нельзя: `bun etf-std/apply-shared-blocks.ts .`. Если Pages ещё не включён, в таблице стоит пометка `(deployment pending)`, она берётся из `pagesPending` реестра.
 
@@ -154,7 +154,7 @@ GitHub разрешает максимум 25 входов `workflow_dispatch`: 
 
 ## 9. Тесты (`update-data.test.ts`)
 
-Один файл, офлайн, без сети и фикстур, данные маленькими встроенными образцами. Внутри: резолвер и приоритеты, строгая валидация, соответствие конфига, `CONTROL_NAMES`, README и `--help`, форма workflow (входов не больше 25, есть `advanced`, жёсткие настройки), структура README (29 брендов), парсеры провайдера, конвейер обновления на подменённом `fetch`, конкурентность, TLS. Не должно быть тестов на живые данные из `api/`, на UI, на закреплённые внешние файлы. Жёстко прописанные числа (например число брендов) ломаются при изменении реестра, поэтому после любого общего изменения запускайте `bun test` везде.
+Один файл, офлайн, без сети и фикстур, данные маленькими встроенными образцами. Внутри только обновление данных: резолвер и приоритеты, строгая валидация, соответствие ключей конфига, `CONTROL_NAMES` и `--help`, парсеры провайдера, метрики, конвейер обновления на подменённом `fetch`, конкурентность, TLS. Тестов на workflow YAML, README, раскладку репозитория, `package.json`, UI и число брендов нет (07.10.2026, решение владельца): это проверяют `check-scripts.ts`, `check-pages.ts`, `check-workflow.ts` и `check-readme.ts`, а такой тест ломается от безвредных изменений. Не должно быть тестов на живые данные из `api/` и на закреплённые внешние файлы.
 
 ## 9a. Поля `metrics` в `api/<slug>/index.json` (контракт для хаба)
 
