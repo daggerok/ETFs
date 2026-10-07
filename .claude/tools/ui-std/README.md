@@ -7,12 +7,14 @@ One shared look and behavior for the 29 brand apps, the hub (`../../src/main.tsx
 | File | What it is | Marker in main.tsx |
 | --- | --- | --- |
 | `filter-engine.tsx` | column types, auto-detection, filter grammar (pure, no DOM) | `3b. Column types, auto-detection` |
-| `filter-ui.tsx` | type badges, filter row, toolbar events | `3c. Column filters` |
+| `filter-ui.tsx` | type badges, filter row, toolbar events, the `Sticky #` toggle (`rank-btn`, `STICKY_RANK_KEY`, `columnFilterState.sticky`) | `3c. Column filters` |
 | `dropdown.tsx` | multi-select popover (search, All, Clear, Toggle, Reset, Only, locked rows) | inside `3e` |
 | `columns-engine.tsx` | the Columns menu (hides cells with CSS by position, state in localStorage) | `3e. Columns menu` |
 | `categories-block.tsx` | the Asset classes dropdown that replaces the category tabs | `3f. Categories dropdown` |
 | `columns.css` | CSS of the dropdown and the trigger buttons, inserted into `src/index.css` | `.dd-trigger` |
-| `readme-block.md` | the `### Column types and filters` README section | |
+| `busy-block.tsx` | the busy overlay: `setBusy`, `withBusy`, `renderBusy` (spinner while heavy work blocks the page) | `busy overlay` comment, right before `init();` |
+| `busy.css` | CSS of the busy overlay, inserted into `src/index.css` | `.busy-overlay` |
+| `readme-block.md` | the `### Column types and filters` README section (also Sticky #, Columns menu, Asset classes) | |
 
 The engine and UI blocks must stay byte-identical across repos except the one `FILTER_STORAGE_PREFIX` line. Block 3d (`FUND_FILTER_COLUMNS`, `sheetView`, ...) is derived per repo (the Python port scripts are deleted)
 

@@ -22,10 +22,11 @@ const FILTER_STORAGE_PREFIX = 'schwab'; // the app's localStorage prefix: the sa
 const COLUMN_FILTERS_KEY = `${FILTER_STORAGE_PREFIX}-column-filters`;
 const COLUMN_TYPES_KEY = `${FILTER_STORAGE_PREFIX}-column-types`;
 const SHOW_FILTERS_KEY = `${FILTER_STORAGE_PREFIX}-show-filters`;
+const STICKY_RANK_KEY = `${FILTER_STORAGE_PREFIX}-sticky-rank`;
 const FILTER_DEBOUNCE_MS = 250;
 
 /** scope (catalog, watchlist, holdings, history, distributions) -> column key -> expression / type chosen with the header badge */
-const columnFilterState: { filters: Record<string, Record<string, string>>; typeOverrides: Record<string, Record<string, ColType>>; show: boolean } = { filters: {}, typeOverrides: {}, show: true };
+const columnFilterState: { filters: Record<string, Record<string, string>>; typeOverrides: Record<string, Record<string, ColType>>; show: boolean; sticky: boolean } = { filters: {}, typeOverrides: {}, show: true, sticky: false }; // sticky: # = rank before the column filters
 
 /** What the last render of a scope computed: the columns, the types in use and the detected types (header badges read it). */
 const filterInfo: Record<string, { columns: FilterColumn[]; types: ColType[]; detected: ColType[] }> = {};
@@ -172,6 +173,12 @@ function renderFilterControls(): void {
   badge.hidden = count === 0;
   badge.textContent = String(count);
   clear.hidden = count === 0;
+  const rank: any = document.getElementById('rank-btn');
+  const rankSummary: any = document.getElementById('rank-summary');
+  if (!rank || !rankSummary) return;
+  rank.disabled = !scope; // the overview has no column filters: its # is always 1..N
+  rank.setAttribute('aria-pressed', String(columnFilterState.sticky));
+  rankSummary.textContent = columnFilterState.sticky ? 'on' : 'off';
 }
 
 /** The filter row sticks right below the header row: tell the CSS how tall the first row is. */
@@ -241,6 +248,7 @@ function restoreColumnFilters(): void {
   }
   columnFilterState.typeOverrides = overrides;
   columnFilterState.show = filterStorageGet(SHOW_FILTERS_KEY) !== 'false';
+  columnFilterState.sticky = filterStorageGet(STICKY_RANK_KEY) === 'true'; // off unless chosen: anything else stored reads as off
 }
 
 function setFilter(scope: string, key: string, value: string): void {
@@ -298,6 +306,14 @@ function bindColumnFilterEvents(): void {
     filtersBtn.addEventListener('click', () => {
       columnFilterState.show = !columnFilterState.show;
       filterStorageSet(SHOW_FILTERS_KEY, String(columnFilterState.show));
+      renderBusy();
+    });
+  }
+  const rankBtn: any = document.getElementById('rank-btn');
+  if (rankBtn) {
+    rankBtn.addEventListener('click', () => {
+      columnFilterState.sticky = !columnFilterState.sticky;
+      filterStorageSet(STICKY_RANK_KEY, String(columnFilterState.sticky));
       renderBusy();
     });
   }
