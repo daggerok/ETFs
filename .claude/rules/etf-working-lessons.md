@@ -1,6 +1,7 @@
 # Lessons from the 29-repo standardization (mistakes not to repeat)
 
 ## Process
+- Sync before work and before every push: `git fetch` then `git rebase origin/main` (never merge main in), resolve conflicts locally, rerun the gates if the rebase pulled changes. Applies to subagents too, restate it in their prompts, and to the 29 brand repos and Stocks
 - Re-survey before acting: other sessions ("arena" runs, the owner) merge, close and rewrite repos while you work. Check `gh pr list --state all`, `git log origin/main` and Pages state first. Pacer and Sprott were rebuilt and merged by someone else and made earlier work obsolete
 - Never touch a working tree with uncommitted changes you did not make (Pacer had some): use `git worktree` instead. Untracked `.idea/` and `node_modules` are the owner's
 - Use a git-tracked check, not memory: run the check scripts on every repo after any shared change. Pass repo lists as bash arrays or scripts; in zsh an unquoted `$VAR` list is not word-split and the checkers silently failed
