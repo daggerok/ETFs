@@ -5,6 +5,9 @@ Owner's words: "simplify tests as much as possible - we should have everything s
 green on macOS AND on the GitHub Linux runner (the workflow runs `bun test` before every update and a failing test
 blocks the data refresh).
 
+## Scope: only the data update is tested (owner, 2026-10-07)
+Tests are strict for the data update only (`scripts/update-data.ts`: controls, parsing, metrics, pipeline, network). Everything else is less important and has no test: the workflow YAML, the README, the repo layout, package.json, the UI and the build are checked by the hub scripts (`check-scripts.ts`, `check-pages.ts`, `check-workflow.ts`, `check-readme.ts`) or by looking at the page. A test that reads a workflow file, the README or the file list of the repo breaks on harmless changes (a new `pull-request.yml` turned SP-Funds red) and is deleted, never patched. Add a non-data test only when it is really needed and say why.
+
 ## Required groups (same `describe` names in every repo, one to five tests each)
 1. `controls` - resolver precedence (file < advanced < inputs < env < protected), strict validation (bad range,
    bad HISTORY_RANGE, unknown TICKERS, CR/LF/NUL), brand env aliases; table-driven, no network
