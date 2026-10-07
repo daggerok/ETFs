@@ -34,7 +34,7 @@
 
 Запрещено и удаляется везде: `.worklog.txt`, `.prompt.txt`, `evidence/`, `research/`, `.plans/`, `COMPLETION.md`, `scripts/fixtures/`, любые вспомогательные скрипты и тесты UI.
 
-`.github/` содержит только `workflows/update-data.yml`, `workflows/github-pages.yml` и `dependabot.yml`. Никаких workflow для CI и проб. В корне нет `app.tsx` и `index.html`: приложение собирает Parcel из `src/` (`bun run build`, `bun run serve`, `bun run build-github-pages`), `dist/` в git не попадает. Имя в `workflow_run.workflows` у `github-pages.yml` равно `name:` у `update-data.yml` (проверяет `etf-std/check-pages.ts`).
+`.github/` содержит только `workflows/update-data.yml`, `workflows/github-pages.yml`, `workflows/pull-request.yml` (эталон `tools/pull-request.ref`: на `pull_request` ставит зависимости, гоняет `bun test` и `bun run build-github-pages`; main собирает и деплоит `github-pages.yml`) и `dependabot.yml`. Других workflow для CI и проб нет. В корне нет `app.tsx` и `index.html`: приложение собирает Parcel из `src/` (`bun run build`, `bun run serve`, `bun run build-github-pages`), `dist/` в git не попадает. Имя в `workflow_run.workflows` у `github-pages.yml` равно `name:` у `update-data.yml` (проверяет `etf-std/check-pages.ts`).
 
 `package.json`: `"scripts"` с `test` (`bun test`), `update` (`bun scripts/update-data.ts`) и сборкой Parcel (`clean`, `build`, `serve`, `build-github-pages` с `--public-url=/<Repo>/`), без флагов Bun; сборочные пакеты (parcel, tailwindcss, @tailwindcss/postcss, ncp, rimraf) в `devDependencies`, `dependencies` пуст.
 
