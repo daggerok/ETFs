@@ -3224,6 +3224,11 @@ function renderFundsTable(): void {
     el.tableBody.innerHTML = html;
   }
 
+  renderCatalogStatus(ids);
+}
+
+/** Status line, ETF counter and subtitle of the catalog table: the part of the render that follows the selection. */
+function renderCatalogStatus(ids: number[]): void {
   const selected = selectedKeys().length;
   const queryText = catalogQuery() ? ` matching “${catalogQuery()}”` : '';
   const rankText = state.stickyRank && ids.length ? ` # = rank among ${catalogBaseline().ids.length.toLocaleString('en-US')} before the column filters.` : '';
@@ -3991,12 +3996,37 @@ function updateActiveFundFallback(): void {
 }
 
 /** Shared trailer for every selection writer: keeps localStorage, tabs, subtitle and the Watchlist in sync. */
-function afterSelectionChange(): void {
+function afterSelectionChange(changed?: string[]): void {
   updateActiveFundFallback();
   persistSelection();
+  const tabBefore = state.activeTab;
   ensureValidTab();
-  render();
+  if (changed && state.activeTab === tabBefore && isEtfCatalogTab(state.activeTab)) patchCatalogSelection(changed);
+  else render();
   void ensureHoldingsForSelection();
+}
+
+/**
+ * A selection change only moves the Use checkbox and the row highlight of the catalog table. Rebuilding every mounted row for it
+ * costs more the further the table was scrolled (about 0.3 s at 1400 rows), so the changed rows are patched in place.
+ */
+function patchCatalogSelection(keys: string[]): void {
+  for (const key of keys) {
+    const row = el.tableBody.querySelector(`tr[data-key="${CSS.escape(key)}"]`);
+    if (!row) continue;
+    const on = state.selected.has(key);
+    row.classList.toggle('selected-row', on);
+    const box: any = row.querySelector('input[data-checkbox]');
+    if (box) box.checked = on;
+  }
+  const ids = catalogIds();
+  const head: any = el.tableHead.querySelector('#select-all-checkbox');
+  if (head && store) {
+    const all = store.keys;
+    head.checked = ids.length > 0 && ids.every(id => state.selected.has(all[id]));
+  }
+  renderTabs();
+  renderCatalogStatus(ids);
 }
 
 function toggleFund(key: string): void {
@@ -4008,7 +4038,7 @@ function toggleFund(key: string): void {
     state.activeFundKey = key;
   }
 
-  afterSelectionChange();
+  afterSelectionChange([key]);
   const activeKey = state.activeFundKey;
   if (activeKey && state.activeTab.startsWith('detail:')) {
     void loadFundMeta(activeKey).then(meta => {
