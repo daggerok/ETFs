@@ -148,13 +148,10 @@
       </div>
     </main>
 
-    <section id="about" class="px-4 sm:px-8 pb-4 sm:pb-8 text-xs text-slate-500 dark:text-slate-400 space-y-2">
-      <p>
-        ETFs Hub is an independent, unofficial tool and is not affiliated with, endorsed by or sponsored by any ETF issuer. It only combines the public static feeds of the sibling repositories at runtime; those feeds are built from the issuers' public pages, SEC EDGAR and Yahoo Finance.
-        Returns come from different sources and as-of dates (see the source badge and the Return As Of column); unavailable values are shown as a dash, never as zero. Nothing here is investment advice.
-      </p>
-      <p id="footer-brands" class="leading-relaxed"></p>
-    </section>
+    <footer class="px-4 sm:px-8 h-4 sm:h-8 flex items-center justify-center text-center text-xs leading-none text-slate-500 dark:text-slate-400">
+      <a href="https://github.com/daggerok/ETFs" target="_blank" rel="noopener noreferrer" class="transition-colors hover:text-slate-800 dark:hover:text-slate-100">daggerok &copy; <span id="footer-year">2026</span></a>
+    </footer>
+    <script>document.getElementById('footer-year').textContent = String(new Date().getFullYear());</script>
   </div>
 
   <script src="./main.tsx" type="module"></script>
