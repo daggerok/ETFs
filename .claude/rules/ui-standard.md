@@ -13,6 +13,13 @@ Applies to every `src/main.tsx` / `src/index.html` / `src/index.css` in the 29 b
 - Short labels: `Filters: on` / `Filters: off` (never `Column filters: shown`), `Columns: 24 of 24`, `Asset classes: All`
 - Toolbar, first row: search, All ETFs pill, Asset classes (hub: Brands, Categories), Columns, Filters (and Clear filters). Action buttons on the right: Copy Tickers, then Upload / Drop N-PORT XML where the app has it, Export .csv, Export .txt, Clear, Blacklist. The action bar may wrap, nothing may poke out of the card at 1500 px
 
+## Clear button (owner, 2026-10-08)
+- The red `Clear` button opens the Stocks dialog (`clearSelectionAndSearch` + `applyClear` over `RESET_ITEMS`, blocks `clear-dialog.tsx` and `clear.css`, port script `clear.ts`, test `clear-uitest.ts`): a checklist of what to reset, all ticked the first time and afterwards as left at the last OK (stored under `<app>-clear-choices`, never reset by Clear itself), Enter is OK, Esc or a click outside is Cancel, the theme is always kept. Never go back to an instant reset without asking
+- Each app keeps its own `RESET_ITEMS` (ids, labels, saved keys); a new saved setting needs a new item there
+
+## Selected count on the title row (owner, 2026-10-08)
+- `N selected: A and M more` stays on the title row in one line (`SUBTITLE_TICKER_CAP` = 1, ellipsis, hidden below `xl`), the detail tabs never wrap (they scroll) and the count chip never wraps, so the sticky top panel keeps one height whatever is selected. Check with `subcheck.ts` (port script `subtitle.ts`; it stubs `window.confirm`, the hub asks before selecting 2,543 rows)
+
 ## Top panels (owner, 2026-10-08)
 - No page `<header>`. The first panel (`#selected-tabs-panel`) holds the icon with the app title and `#app-subtitle` on the left, the detail tabs in the middle, the count chip (`#ticker-count`) and the theme toggle on the right; the toolbar panel (search, All ETFs pill, dropdowns, action buttons) is the second panel right below it. Both sit in `#top-panels`
 - Sticky: from `lg` the wrapper is `sticky top-0` and carries the page background so nothing shows through the gaps; below `lg` the wrapper is `display: contents` and only the first panel is sticky (the toolbar is several rows tall on a phone and would eat the screen)
