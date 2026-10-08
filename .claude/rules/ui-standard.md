@@ -15,7 +15,7 @@ Applies to every `src/main.tsx` / `src/index.html` / `src/index.css` in the 29 b
 
 ## Footer (all ETF repos, Stocks and gex, owner 2026-10-07)
 - Same footer as the `gex` repo: a centered link `daggerok &copy; <current year>` (the year is set at run time by an inline script, id `footer-year`) that opens the repository of the app (`https://github.com/daggerok/<Repo>`), 10px text, `text-slate-400`, dotted underline
-- Spacing follows the side gutter of the site (header and `main` use `px-4 sm:px-8`): the footer uses the same side padding, and its text line plus the bottom padding add up to one gutter (`pb-[3.5px] sm:pb-[19.5px]` for a 12.5px line: 16px, 32px from `sm`). Whatever the footer content is (the hub keeps its disclaimer above the link line), the box model stays the same. In `gex` the footer shows on Desk and GEX, the Chart tab keeps the TradingView notice
+- Spacing follows the side gutter of the site (header and `main` use `px-4 sm:px-8`): the footer uses the same side padding, and its text line plus the bottom padding add up to one gutter (`pb-[3.5px] sm:pb-[19.5px]` for a 12.5px line: 16px, 32px from `sm`). Whatever the footer content is (the hub has no disclaimer or brand links below the link line either: the owner removed them on 2026-10-08, the footer is only the link), the box model stays the same. In `gex` the footer shows on Desk and GEX, the Chart tab keeps the TradingView notice
 - Brand apps: the footer sits right after `</main>` inside the page container; when it changes, edit `src/index.html` in every repo (a small Bun script with exactly-one-match replacements, then a browser check of the paddings)
 
 ## Wide catalog tables

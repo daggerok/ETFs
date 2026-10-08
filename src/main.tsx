@@ -3976,14 +3976,6 @@ function renderSubtitle(text?: string): void {
   renderHeaderSummary(el.subtitle, selectedKeys(), state.activeFundKey, activateFund);
 }
 
-function renderFooterBrands(): void {
-  const target = document.getElementById('footer-brands');
-  if (!target) return;
-  target.innerHTML = 'Brands: ' + BRANDS.map(brand =>
-    `<a href="${GITHUB_PAGES_ORIGIN}${encodeURIComponent(brand.repo)}/" target="_blank" rel="noopener noreferrer" class="text-blue-600 dark:text-blue-400 hover:underline">${escapeHtml(brand.brand)}</a> (<a href="https://github.com/daggerok/${encodeURIComponent(brand.repo)}" target="_blank" rel="noopener noreferrer" class="hover:underline">repo</a>)`
-  ).join(' · ');
-}
-
 // =========================================================================
 // 9. Selection & blacklist (keyed by brand + ticker)
 // =========================================================================
@@ -4717,7 +4709,6 @@ function init(): void {
   bindEvents();
   syncSearchInput();
   fitTableHeight();
-  renderFooterBrands();
   renderFilters();
   renderBrandList();
   renderSubtitle();
