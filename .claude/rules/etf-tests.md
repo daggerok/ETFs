@@ -5,10 +5,10 @@ Owner's words: "simplify tests as much as possible - we should have everything s
 green on macOS AND on the GitHub Linux runner (the workflow runs `bun test` before every update and a failing test
 blocks the data refresh).
 
-## The hub has no tests (2026-10-08)
-- The hub (`ETFs`) has no test file and needs none: it updates no data, it only reads the published feeds in the browser. Its gates are `bun run build` and the browser checks in `.claude/tools/ui-std`
-- Never run `bun test` in the hub root: bun walks into the 29 brand folders (each its own git repo, ignored by the hub) and runs all their `scripts/update-data.test.ts` in one process, where 28 pipeline, network and metrics tests fail because they expect their own cwd and a clean environment. Those failures say nothing about the hub. Run the tests inside each brand repo
-- The hub CI (`github-pages.yml`, `pull-request.yml`) does not run `bun test` either
+## The hub has one small test file (2026-10-08)
+- The hub (`ETFs`) updates no data, so it has no data tests. Its only test file is `scripts/hub.test.ts`: every `byId(...)` main.tsx reads exists in `src/index.html` (a missing id breaks the whole page at start, and moving panels around makes that easy), plus the top panel layout (no `<header>`, title, count chip and theme toggle in the first panel above the toolbar). Why it is needed: the UI is otherwise only checked by hand and by the browser scripts in `.claude/tools/ui-std`
+- `bunfig.toml` sets `[test] root = "scripts"`, so `bun test` in the hub root never walks into the 29 brand folders (each its own git repo, ignored by the hub). Without it bun ran all their `scripts/update-data.test.ts` in one process and 28 pipeline, network and metrics tests failed, because they expect their own cwd and a clean environment. Run the data tests inside each brand repo
+- Keep it small: add a hub test only for a contract whose break takes the page down
 
 ## Scope: only the data update is tested (owner, 2026-10-07)
 Tests are strict for the data update only (`scripts/update-data.ts`: controls, parsing, metrics, pipeline, network). Everything else is less important and has no test: the workflow YAML, the README, the repo layout, package.json, the UI and the build are checked by the hub scripts (`check-scripts.ts`, `check-pages.ts`, `check-workflow.ts`, `check-readme.ts`) or by looking at the page. A test that reads a workflow file, the README or the file list of the repo breaks on harmless changes (a new `pull-request.yml` turned SP-Funds red) and is deleted, never patched. Add a non-data test only when it is really needed and say why.

@@ -1,0 +1,3 @@
+[test]
+# the 29 brand folders inside are separate repos with their own tests: never scan them from the hub
+root = "scripts"
