@@ -13,6 +13,12 @@ Applies to every `src/main.tsx` / `src/index.html` / `src/index.css` in the 29 b
 - Short labels: `Filters: on` / `Filters: off` (never `Column filters: shown`), `Columns: 24 of 24`, `Asset classes: All`
 - Toolbar, first row: search, All ETFs pill, Asset classes (hub: Brands, Categories), Columns, Filters (and Clear filters). Action buttons on the right: Copy Tickers, then Upload / Drop N-PORT XML where the app has it, Export .csv, Export .txt, Clear, Blacklist. The action bar may wrap, nothing may poke out of the card at 1500 px
 
+## Top panels (owner, 2026-10-08)
+- No page `<header>`. The first panel (`#selected-tabs-panel`) holds the icon with the app title and `#app-subtitle` on the left, the detail tabs in the middle, the count chip (`#ticker-count`) and the theme toggle on the right; the toolbar panel (search, All ETFs pill, dropdowns, action buttons) is the second panel right below it. Both sit in `#top-panels`
+- Sticky: from `lg` the wrapper is `sticky top-0` and carries the page background so nothing shows through the gaps; below `lg` the wrapper is `display: contents` and only the first panel is sticky (the toolbar is several rows tall on a phone and would eat the screen)
+- `fitTableHeight` observes `#top-panels > *` as well as `main > *`; the table, not the page, scrolls on desktop, so check that the footer ends at the window bottom
+- Ported by `.claude/tools/ui-std/panels.ts` with `pcheck.ts` and `assert.ts` (usage in their first lines), proven with a headless Chrome check at 1500, 1024 and 390 px
+
 ## Footer (all ETF repos, Stocks and gex, owner 2026-10-07)
 - Same footer as the `gex` repo: a centered link `daggerok &copy; <current year>` (the year is set at run time by an inline script, id `footer-year`) that opens the repository of the app (`https://github.com/daggerok/<Repo>`), 10px text, `text-slate-400`, dotted underline
 - Spacing follows the side gutter of the site (header and `main` use `px-4 sm:px-8`): the footer uses the same side padding, and its text line plus the bottom padding add up to one gutter (`pb-[3.5px] sm:pb-[19.5px]` for a 12.5px line: 16px, 32px from `sm`). Whatever the footer content is (the hub has no disclaimer or brand links below the link line either: the owner removed them on 2026-10-08, the footer is only the link), the box model stays the same. In `gex` the footer shows on Desk and GEX, the Chart tab keeps the TradingView notice
