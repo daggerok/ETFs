@@ -5,6 +5,11 @@ Owner's words: "simplify tests as much as possible - we should have everything s
 green on macOS AND on the GitHub Linux runner (the workflow runs `bun test` before every update and a failing test
 blocks the data refresh).
 
+## The hub has no tests (2026-10-08)
+- The hub (`ETFs`) has no test file and needs none: it updates no data, it only reads the published feeds in the browser. Its gates are `bun run build` and the browser checks in `.claude/tools/ui-std`
+- Never run `bun test` in the hub root: bun walks into the 29 brand folders (each its own git repo, ignored by the hub) and runs all their `scripts/update-data.test.ts` in one process, where 28 pipeline, network and metrics tests fail because they expect their own cwd and a clean environment. Those failures say nothing about the hub. Run the tests inside each brand repo
+- The hub CI (`github-pages.yml`, `pull-request.yml`) does not run `bun test` either
+
 ## Scope: only the data update is tested (owner, 2026-10-07)
 Tests are strict for the data update only (`scripts/update-data.ts`: controls, parsing, metrics, pipeline, network). Everything else is less important and has no test: the workflow YAML, the README, the repo layout, package.json, the UI and the build are checked by the hub scripts (`check-scripts.ts`, `check-pages.ts`, `check-workflow.ts`, `check-readme.ts`) or by looking at the page. A test that reads a workflow file, the README or the file list of the repo breaks on harmless changes (a new `pull-request.yml` turned SP-Funds red) and is deleted, never patched. Add a non-data test only when it is really needed and say why.
 
