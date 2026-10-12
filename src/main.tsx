@@ -91,6 +91,10 @@ const BRAND_TIMEOUT_MS = 25000;
 const FETCH_TIMEOUT_MS = 30000; // meta.json and holdings/history pages (headers and body)
 const HOLDINGS_CONCURRENCY = 6; // bounded whole-selection aggregation workers
 const WATCHLIST_CHUNK = 250; // rows per rendered Watchlist DOM chunk
+const SHEET_CHUNK = 300; // rows per rendered Holdings / History DOM chunk (loaded pages beyond it mount on scroll)
+let sheetChunkSig = '';
+let sheetRenderedCount = 0;
+let sheetShownTotal = 0; // filtered rows of the shown sheet at the last render (how far the DOM window can grow)
 const CATALOG_CHUNK = 200; // rows per rendered catalog DOM chunk
 const LARGE_SELECTION = 150; // ask before selecting more funds than this at once
 const DEFAULT_STALE_DAYS = 45;
@@ -1553,7 +1557,18 @@ function activeSheetTab(): 'holdings' | 'history' | null {
 function maybeLoadMoreRows(): void {
   const sheet = activeSheetTab();
   if (!sheet) return;
+  if (growSheetChunk()) return; // loaded rows first, the network second
   void loadNextSheetPage(sheet);
+}
+
+/** Mounts the next SHEET_CHUNK of already loaded sheet rows; false when every filtered row is in the DOM. */
+function growSheetChunk(): boolean {
+  const sheet = activeSheetTab();
+  if (!sheet || sheetRenderedCount + SHEET_CHUNK >= sheetShownTotal) return false;
+  sheetRenderedCount += SHEET_CHUNK;
+  renderDetailTable(sheet);
+  renderStaticLoadSentinel();
+  return true;
 }
 
 function renderStaticLoadSentinel(): void {
@@ -1567,7 +1582,7 @@ function renderStaticLoadSentinel(): void {
     el.staticLoadSentinel.classList.add('hidden');
     return;
   }
-  const more = entry.nextPage < entry.manifest.pages.length;
+  const more = entry.nextPage < entry.manifest.pages.length || sheetRenderedCount + SHEET_CHUNK < sheetShownTotal;
   el.staticLoadSentinel.classList.toggle('hidden', !more);
   el.staticLoadStatus.textContent = entry.loading ? 'Loading more rows…' : more ? 'Scroll or click to load more rows…' : '';
 }
@@ -3732,6 +3747,11 @@ function renderSheetTable(fund: FundRef, sheet: 'holdings' | 'history'): void {
 
   const headers = entry.headers;
   const rows = sheetView(headers, entry.rows, sheet, NUMERIC_SHEET_HEADERS);
+  const chunkSig = [sheetKey(sheet), state.sortKey, state.sortDir, currentQuery(), JSON.stringify(state.filters[sheet] || {}), JSON.stringify(state.typeOverrides[sheet] || {})].join('|');
+  if (chunkSig !== sheetChunkSig) { sheetChunkSig = chunkSig; sheetRenderedCount = 0; }
+  sheetShownTotal = rows.length;
+  const shownRows = rows.slice(0, sheetRenderedCount + SHEET_CHUNK);
+  const cellClasses = headers.map(header => NUMERIC_SHEET_HEADERS.includes(header) ? 'text-right font-mono text-slate-700 dark:text-slate-300' : 'text-slate-700 dark:text-slate-300');
 
   el.tableHead.innerHTML = gridHeadHtml(sheet, sheetCols(headers, NUMERIC_SHEET_HEADERS));
   bindSortHeaders();
@@ -3739,16 +3759,21 @@ function renderSheetTable(fund: FundRef, sheet: 'holdings' | 'history'): void {
   if (!rows.length) {
     el.tableBody.innerHTML = `<tr><td colspan="${headers.length + 1}" class="py-12 text-center text-slate-400 dark:text-slate-500">No rows match your search and filters${entry.loading ? ' (still loading…)' : ''}.</td></tr>`;
   } else {
-    el.tableBody.innerHTML = rows.map((row, index) => {
+    const parts: string[] = new Array(shownRows.length);
+    for (let index = 0; index < shownRows.length; index++) {
+      const row = shownRows[index];
       const values: string[] = row.values || [];
-      return `
-      <tr class="hover:bg-slate-50 dark:hover:bg-slate-700/30 transition border-b border-slate-100 dark:border-slate-700/30">
-        <td class="py-2.5 px-4 text-slate-400 dark:text-slate-500 text-xs text-center font-mono">${gridRowNumber(row, index)}</td>
-        ${values.map((cell, columnIndex) => `
-          <td class="py-2.5 px-4 ${NUMERIC_SHEET_HEADERS.includes(headers[columnIndex]) ? 'text-right font-mono text-slate-700 dark:text-slate-300' : 'text-slate-700 dark:text-slate-300'}">${escapeHtml(cell === '' ? DASH : cell)}</td>
-        `).join('')}
-      </tr>
-    `;}).join('');
+      let cells = '';
+      for (let columnIndex = 0; columnIndex < values.length; columnIndex++) {
+        const cell = values[columnIndex];
+        cells += `<td class="py-2.5 px-4 ${cellClasses[columnIndex] || cellClasses[0] || ''}">${escapeHtml(cell === '' ? DASH : cell)}</td>`;
+      }
+      parts[index] = `<tr class="hover:bg-slate-50 dark:hover:bg-slate-700/30 transition border-b border-slate-100 dark:border-slate-700/30"><td class="py-2.5 px-4 text-slate-400 dark:text-slate-500 text-xs text-center font-mono">${gridRowNumber(row, index)}</td>${cells}</tr>`;
+    }
+    if (rows.length > shownRows.length) {
+      parts.push(`<tr id="sheet-more-row" class="cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-700/30 transition"><td colspan="${headers.length + 1}" class="py-3 text-center text-xs text-slate-400 dark:text-slate-500">Scroll or click to show more rows… (${(rows.length - shownRows.length).toLocaleString('en-US')} loaded rows not shown yet)</td></tr>`);
+    }
+    el.tableBody.innerHTML = parts.join('');
   }
 
   el.tickerCount.textContent = fund.ticker;
@@ -4778,6 +4803,7 @@ function bindEvents(): void {
     }
     if (target.closest('#watchlist-more-row')) growWatchlistChunk();
     else if (target.closest('#catalog-more-row')) growCatalogChunk();
+    else if (target.closest('#sheet-more-row')) growSheetChunk();
   });
 
   // Paginated sheets: append more rows as the sentinel scrolls into view.
@@ -4803,9 +4829,11 @@ function bindEvents(): void {
     }
     const sheet = activeSheetTab();
     if (!sheet || !state.activeFundKey) return;
+    if (distanceToBottom >= 600) return;
+    if (growSheetChunk()) return; // mount loaded rows before fetching the next page
     const entry = sheetState.get(sheetKey(sheet));
     if (!entry || entry.loading || entry.nextPage >= entry.manifest.pages.length) return;
-    if (distanceToBottom < 600) void loadNextSheetPage(sheet);
+    void loadNextSheetPage(sheet);
   }, { passive: true });
 
   window.addEventListener('resize', fitTableHeight);
