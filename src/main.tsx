@@ -1441,7 +1441,7 @@ async function fetchNextSheetPage(key: string, entry: SheetEntry): Promise<void>
   if (entry.nextPage >= entry.manifest.pages.length) return;
   const page = await fetchPage(key, entry.manifest.pages[entry.nextPage]);
   if (!entry.headers.length && page.headers.length) entry.headers = page.headers;
-  entry.rows = entry.rows.concat(page.rows);
+  for (let i = 0; i < page.rows.length; i++) entry.rows.push(page.rows[i]); // in place: no O(n) copy per page, same array identity for the memoized views
   entry.nextPage += 1;
 }
 
