@@ -2959,20 +2959,17 @@ function isEmptyValue(value: unknown): boolean {
   return value === null || value === undefined || value === '' || value === DASH || value === '—' || value === '-' || (typeof value === 'number' && Number.isNaN(value));
 }
 
-function compareValues(a: unknown, b: unknown): number {
-  if (typeof a === 'number' && typeof b === 'number') return a - b;
-  const an = numberOrNull(a);
-  const bn = numberOrNull(b);
-  if (an !== null && bn !== null) return an - bn;
-  const as = String(a ?? '');
-  const bs = String(b ?? '');
-  // History dates ("21-Aug-2026") sort chronologically.
-  if (/^\d{1,2}-[A-Za-z]{3}-\d{4}$/.test(as) || /^\d{1,2}-[A-Za-z]{3}-\d{4}$/.test(bs)) {
-    const ad = Date.parse(as.replace(/-/g, ' '));
-    const bd = Date.parse(bs.replace(/-/g, ' '));
-    if (!Number.isNaN(ad) && !Number.isNaN(bd)) return ad - bd;
-  }
-  return as.localeCompare(bs, undefined, { numeric: true });
+const SORT_COLLATOR = new Intl.Collator(undefined, { numeric: true });
+const HISTORY_DATE_RE = /^\d{1,2}-[A-Za-z]{3}-\d{4}$/;
+
+type SortKeys = { empty: boolean; num: number | null; text: string; dateLike: boolean; date: number };
+type SortKeyed = SortKeys & { row: any };
+
+/** The comparison keys of one cell, computed once per row (not once per comparison). */
+function sortKeyOf(value: unknown): SortKeys {
+  if (isEmptyValue(value)) return { empty: true, num: null, text: '', dateLike: false, date: NaN };
+  const text = String(value ?? '');
+  return { empty: false, num: numberOrNull(value), text, dateLike: HISTORY_DATE_RE.test(text), date: NaN };
 }
 
 /** Generic sort for the small tabs (Watchlist, detail sheets); empty values always sort last. */
@@ -2980,14 +2977,25 @@ function sortRows(rows: any[]): any[] {
   if (state.sortKey === 'rank') return rows;
   const direction = state.sortDir === 'asc' ? 1 : -1;
   const key = state.sortKey;
-  return [...rows].sort((a, b) => {
-    const av = a[key];
-    const bv = b[key];
-    const ae = isEmptyValue(av);
-    const be = isEmptyValue(bv);
-    if (ae || be) return ae && be ? 0 : ae ? 1 : -1;
-    return compareValues(av, bv) * direction;
+  const keyed: SortKeyed[] = new Array(rows.length);
+  let anyDate = false;
+  for (let i = 0; i < rows.length; i++) {
+    keyed[i] = { row: rows[i], ...sortKeyOf(rows[i][key]) };
+    if (keyed[i].dateLike) anyDate = true;
+  }
+  // a pair is compared as dates when either cell looks like "21-Aug-2026" and both parse, so parse every cell, but only in such a column
+  if (anyDate) for (let i = 0; i < keyed.length; i++) if (!keyed[i].empty) keyed[i].date = Date.parse(keyed[i].text.replace(/-/g, ' '));
+  keyed.sort((a, b) => {
+    if (a.empty || b.empty) return a.empty && b.empty ? 0 : a.empty ? 1 : -1; // unavailable values last in both directions
+    let order: number;
+    if (a.num !== null && b.num !== null) order = a.num - b.num;
+    else if ((a.dateLike || b.dateLike) && !Number.isNaN(a.date) && !Number.isNaN(b.date)) order = a.date - b.date; // History dates ("21-Aug-2026") chronologically
+    else order = SORT_COLLATOR.compare(a.text, b.text);
+    return order * direction;
   });
+  const out: any[] = new Array(keyed.length);
+  for (let i = 0; i < keyed.length; i++) out[i] = keyed[i].row;
+  return out;
 }
 
 function sortHeader(label: string, key: string, numeric = false, extraClass = '', badge = ''): string {
