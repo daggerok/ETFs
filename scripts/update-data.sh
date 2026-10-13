@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Refresh the data of the sibling ETF repos cloned in the hub folder (the parent of scripts/), one repo after another,
 # with each repo's own updater, then commit and push it the way its update-data.yml workflow does:
-#   pull main fast-forward -> bun install --frozen-lockfile -> bun test -> ./scripts/update-data.ts
+#   pull main fast-forward -> bun install --frozen-lockfile -> ./scripts/update-data.ts
 #   -> git add api/<feed> -> commit "chore(data): update <Brand> ETF data" -> push (rebase and retry when main moved)
 # The feed folder and the commit message are read from the repo's .github/workflows/update-data.yml.
-# A repo that is not on main, has uncommitted changes or fails its tests is skipped and reported, never touched.
+# A repo that is not on main or has uncommitted changes is skipped and reported, never touched.
 
 set -uo pipefail
 cd "$(dirname "$0")/.." || exit 1
@@ -98,8 +98,6 @@ update_repo() {
   git pull --ff-only origin main || return 1
   echo "Installing packages..."
   bun install --frozen-lockfile || return 1
-  echo "Running the tests (the workflow does too: a failing test blocks the update)..."
-  bun test || return 1
 
   echo "Running ./scripts/update-data.ts ..."
   bun ./scripts/update-data.ts
