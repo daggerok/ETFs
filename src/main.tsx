@@ -3707,6 +3707,22 @@ function renderEmptyDetail(message: string): void {
   el.tickerCount.textContent = state.activeFundKey ? keyTicker(state.activeFundKey) : '0 ETFs';
 }
 
+/** Normalized copies of sheet rows that brands publish as objects keyed by the header text, one per raw rows array so gridView's identity cache still hits. */
+const sheetRowsCache = new WeakMap<object, string[][]>();
+
+/** Rows of a published sheet as string[][] in header order: array rows pass through unchanged, object rows (Franklin, Global-X, Neos, ProShares, Themes, VanEck distributions) are read by header. */
+function sheetRows(headers: string[], raw: unknown): string[][] {
+  if (!Array.isArray(raw)) return [];
+  if (raw.every(row => Array.isArray(row))) return raw;
+  const cached = sheetRowsCache.get(raw);
+  if (cached) return cached;
+  const rows: string[][] = raw.map((row: any) => Array.isArray(row)
+    ? row
+    : headers.map(header => (row && typeof row === 'object' && row[header] !== null && row[header] !== undefined ? String(row[header]) : '')));
+  sheetRowsCache.set(raw, rows);
+  return rows;
+}
+
 /** Filtered + sorted view of a sheet exactly as the table shows it (also used by the exports). */
 function sheetView(headers: string[], sourceRows: string[][], scope: string, numericHeaders: string[] = []): any[] {
   return gridView(scope, sheetCols(headers, numericHeaders), sourceRows, () => sourceRows.map((row, sourceIndex) => {
@@ -3899,7 +3915,7 @@ function renderDistributionsTable(fund: FundRef): void {
   const meta = fundMetaCache.get(fund.key);
   const worksheet = meta && meta.distributions ? meta.distributions : { headers: [], rows: [] };
   const headers: string[] = Array.isArray(worksheet.headers) ? worksheet.headers : [];
-  const sourceRows: string[][] = Array.isArray(worksheet.rows) ? worksheet.rows : [];
+  const sourceRows: string[][] = sheetRows(headers, worksheet.rows);
   const rows = sheetView(headers, sourceRows, 'distributions');
 
   el.tableHead.innerHTML = gridHeadHtml('distributions', sheetCols(headers, []));
@@ -4399,7 +4415,7 @@ function currentExportRows(): { headers: string[]; rows: string[][]; scope: stri
     const dHeaders: string[] = Array.isArray(worksheet.headers) ? worksheet.headers : [];
     return {
       headers: ['#', ...dHeaders],
-      rows: sheetView(dHeaders, Array.isArray(worksheet.rows) ? worksheet.rows : [], 'distributions').map((row: any, index: number) => [String(gridRowNumber(row, index)), ...row.values]),
+      rows: sheetView(dHeaders, sheetRows(dHeaders, worksheet.rows), 'distributions').map((row: any, index: number) => [String(gridRowNumber(row, index)), ...row.values]),
       scope: fund ? `${fund.ticker}-distributions` : 'distributions',
     };
   }
