@@ -1413,7 +1413,8 @@ async function fetchPage(key: string, pagePath: string): Promise<{ headers: stri
   if (!page || typeof page !== 'object') throw new Error('malformed page');
   const headers: string[] = Array.isArray(page.headers) ? page.headers : [];
   const rows: any[] = Array.isArray(page.rows) ? page.rows : [];
-  return { headers, rows: rows.map(row => headers.map(header => String(row[header] ?? ''))) };
+  // Most brands publish rows as objects keyed by the header, iShares as arrays in header order (its feed is near the 1 GB Pages limit)
+  return { headers, rows: rows.map(row => headers.map((header, index) => String((Array.isArray(row) ? row[index] : row && row[header]) ?? ''))) };
 }
 
 /** Loads the first page of a paginated sheet and prepares lazy appending. */
