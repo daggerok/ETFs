@@ -114,7 +114,7 @@ const NUMERIC_SHEET_HEADERS = ['Weight', 'Weight (%)', 'Market Weight', 'Shares 
 
 // Sortable numeric columns of the catalog: the metrics block of every feed row
 // plus a few top level numbers. NaN means unavailable (always sorts last).
-const METRIC_KEYS = ['ytd', 'tr1y', 'tr3y', 'tr5y', 'tr10y', 'cagr3y', 'cagr5y', 'cagr10y', 'siAnn', 'dividendYield', 'secYield'];
+const METRIC_KEYS = ['ytd', 'tr1y', 'tr3y', 'tr5y', 'tr10y', 'cagr3y', 'cagr5y', 'cagr10y', 'siAnn', 'dividendYield', 'secYield', 'range52w', 'week52Low', 'week52High'];
 const FUND_NUM_KEYS = ['aumValue', 'terValue', 'terGrossValue', 'navValue'];
 const STRING_SORT_KEYS = ['ticker', 'name', 'brand', 'category', 'dividendFrequency', 'yieldBasis'];
 const ASC_FIRST_KEYS = ['ticker', 'name', 'brand', 'category', 'dividendFrequency', 'yieldBasis', 'symbol', 'section', 'metric', 'identifier', 'label'];
@@ -131,6 +131,9 @@ const COLUMN_TOOLTIPS: Record<string, string> = {
   Identifier: 'CUSIP / ISIN / SEDOL - security identifier as published in the holdings sheet. Positions without an exchange ticker (bonds, cash, futures) are identified in the Watchlist by this.',
   SEDOL: 'SEDOL - Stock Exchange Daily Official List identifier.',
   NAV: 'NAV (Net Asset Value) - per-share dollar value of the fund.',
+  '52W Range': '52W Range - where the last close sits between the 52-week low (0%) and high (100%) of the daily closes; sorts by that position. A fund with less than 52 weeks of history shows the range since its first close (amber bar). Brands that publish only NAV history use NAV.',
+  '52W Low': '52W Low - lowest daily close of the last 52 weeks (or since the first close of a younger fund).',
+  '52W High': '52W High - highest daily close of the last 52 weeks (or since the first close of a younger fund).',
   'Net Assets': 'Net Assets (AUM) - total market value of all fund assets minus liabilities.',
   Expense: 'Expense Ratio (TER), NET - total annual fund operating expenses after waivers as a % of assets, as published by the issuer. Hover a value for the gross ratio when published.',
   Weight: 'Weight - position weight as a percentage of the fund\'s total net assets.',
@@ -1660,7 +1663,7 @@ function nonBlacklistedIds(): number[] {
 
 // ---- column filters of the catalog: column model, detected types, compiled expressions -------
 
-type CatalogColumn = { key: string; label: string; kind: 'text' | 'num' | 'basis' | 'date'; fmt: 'text' | 'pct' | 'money' | 'int' | 'nav' | 'ter' };
+type CatalogColumn = { key: string; label: string; kind: 'text' | 'num' | 'basis' | 'date'; fmt: 'text' | 'pct' | 'money' | 'int' | 'nav' | 'ter' | 'price' };
 
 /** The columns of the catalog table in display order; the header, the filter row and the filters all read this list (key = sort key). */
 const CATALOG_COLUMNS: CatalogColumn[] = [
@@ -1669,6 +1672,9 @@ const CATALOG_COLUMNS: CatalogColumn[] = [
   { key: 'name', label: 'Fund Name', kind: 'text', fmt: 'text' },
   { key: 'category', label: 'Type', kind: 'text', fmt: 'text' },
   { key: 'navValue', label: 'NAV', kind: 'num', fmt: 'nav' },
+  { key: 'range52w', label: '52W Range', kind: 'num', fmt: 'pct' },
+  { key: 'week52Low', label: '52W Low', kind: 'num', fmt: 'price' },
+  { key: 'week52High', label: '52W High', kind: 'num', fmt: 'price' },
   { key: 'aumValue', label: 'Net Assets', kind: 'num', fmt: 'money' },
   { key: 'terValue', label: 'Expense', kind: 'num', fmt: 'ter' },
   { key: 'dividendYield', label: 'Dividend Yield', kind: 'num', fmt: 'pct' },
@@ -1718,7 +1724,7 @@ function catalogCellText(col: CatalogColumn, id: number): string {
   else if (col.fmt === 'ter') text = terText(id);
   else {
     const value = s.num[col.key][id];
-    text = col.fmt === 'pct' ? formatPercent(value) : col.fmt === 'money' ? formatMoney(value) : formatInteger(value);
+    text = col.fmt === 'pct' ? formatPercent(value) : col.fmt === 'money' ? formatMoney(value) : col.fmt === 'price' ? range52wPriceText(Number.isFinite(value) ? value : null) : formatInteger(value);
   }
   return text === DASH ? '' : text.toLowerCase();
 }
@@ -3155,6 +3161,9 @@ function fundRowHtml(id: number, index: number): string {
           <td class="py-2.5 px-4 text-slate-700 dark:text-slate-300 font-medium" title="${escapeHtml(s.name[id])}">${escapeHtml(s.name[id])}${closedBadgeHtml(raw)}</td>
           <td class="py-2.5 px-4 text-slate-600 dark:text-slate-300">${escapeHtml(s.categoryText[id] || DASH)}</td>
           <td class="${numCls}">${escapeHtml(raw.nav || DASH)}</td>
+          ${range52wCellHtml(metrics, numCls)}
+          <td class="${numCls}">${range52wPriceText(metrics.week52Low)}</td>
+          <td class="${numCls}">${range52wPriceText(metrics.week52High)}</td>
           <td class="${numCls}">${formatMoney(num.aumValue[id])}</td>
           ${terCell(id)}
           ${yieldCell(id)}
@@ -4729,7 +4738,7 @@ function currentExportRows(): { headers: string[]; rows: string[][]; scope: stri
   const ids = catalogIds();
   const cell = (name: string, id: number): string => (s ? numberCell(nanToNull(s.num[name][id])) : '');
   return {
-    headers: ['#', 'Selected', 'Ticker', 'Brand', 'Fund Name', 'Type', 'NAV', 'Net Assets ($)', 'Expense (%)', 'Dividend Yield (%)', 'SEC Yield (%)', 'Yield Basis', 'Frequency', 'YTD Return (%)', 'TR 1Y (%)', 'TR 3Y (%)', 'TR 5Y (%)', 'TR 10Y (%)', 'CAGR 3Y (%)', 'CAGR 5Y (%)', 'CAGR 10Y (%)', 'SI Ann. (%)', 'Returns Source', 'Return As Of', 'Inception', 'Holdings', 'History', 'As Of'],
+    headers: ['#', 'Selected', 'Ticker', 'Brand', 'Fund Name', 'Type', 'NAV', '52W Range (%)', '52W Low ($)', '52W High ($)', 'Net Assets ($)', 'Expense (%)', 'Dividend Yield (%)', 'SEC Yield (%)', 'Yield Basis', 'Frequency', 'YTD Return (%)', 'TR 1Y (%)', 'TR 3Y (%)', 'TR 5Y (%)', 'TR 10Y (%)', 'CAGR 3Y (%)', 'CAGR 5Y (%)', 'CAGR 10Y (%)', 'SI Ann. (%)', 'Returns Source', 'Return As Of', 'Inception', 'Holdings', 'History', 'As Of'],
     rows: s ? ids.map((id, index) => {
       const raw = s.raw[id];
       const metrics = raw.metrics || {};
@@ -4741,6 +4750,9 @@ function currentExportRows(): { headers: string[]; rows: string[][]; scope: stri
         s.name[id],
         s.categoryText[id],
         raw.nav || '',
+        cell('range52w', id),
+        cell('week52Low', id),
+        cell('week52High', id),
         cell('aumValue', id),
         cell('terValue', id),
         cell('dividendYield', id),
@@ -5186,6 +5198,59 @@ function init(): void {
     el.tableBody.innerHTML = `<tr><td colspan="10" class="py-12 text-center text-rose-500 dark:text-rose-300">${escapeHtml(`Unable to load the brand feeds: ${message}`)}</td></tr>`;
   });
 }
+
+// ---- 52-week range (owner 2026-10-29): index.json metrics week52Low, week52High, range52w, range52wClose, range52wAsOf, range52wSince, range52wBasis ----
+// Shared block of .claude/tools/etfs/ui-std/range52w-block.tsx: never edit it in one repo. CSS: range52w.css.
+
+/** A finite number or null (local copy, so the block needs nothing else from the app). */
+function range52wNumber(value: unknown): number | null {
+  if (value === null || value === undefined || value === '') return null;
+  const parsed = typeof value === 'number' ? value : Number(String(value).replace(/[$,%\s]/g, ''));
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+/** The three sortable row fields from a row's metrics: spread them into the flattened table row. */
+function range52wRowFields(metrics: any): { range52w: number | null; week52Low: number | null; week52High: number | null } {
+  const m = metrics && typeof metrics === 'object' ? metrics : {};
+  return { range52w: range52wNumber(m.range52w), week52Low: range52wNumber(m.week52Low), week52High: range52wNumber(m.week52High) };
+}
+
+/** `42.25%` (the `%` type of the column filters), or an em dash. */
+function range52wText(value: unknown): string {
+  const parsed = range52wNumber(value);
+  return parsed === null ? '—' : `${parsed.toFixed(2)}%`;
+}
+
+/** A 52-week low or high as a share price: `$25.29`, `$1,234.50`, or an em dash. */
+function range52wPriceText(value: unknown): string {
+  const parsed = range52wNumber(value);
+  return parsed === null ? '—' : `$${parsed.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+/** Tooltip: what the percent means, the close it is measured on, the range, the basis, and the note for a young fund. */
+function range52wTitle(metrics: any): string {
+  const m = metrics && typeof metrics === 'object' ? metrics : {};
+  const position = range52wNumber(m.range52w);
+  if (position === null) return '52-week range: not available (no price history, or the price did not move)';
+  const lines = [
+    `52-week range: ${range52wText(position)} (0% = at the 52-week low, 100% = at the 52-week high)`,
+    `Close ${range52wPriceText(m.range52wClose)}${m.range52wAsOf ? ` on ${m.range52wAsOf}` : ''}`,
+    `Low ${range52wPriceText(m.week52Low)}, high ${range52wPriceText(m.week52High)} (daily ${m.range52wBasis ? String(m.range52wBasis).toLowerCase() : 'close'} prices)`,
+  ];
+  if (m.range52wSince) lines.push(`Less than 52 weeks of history: range since ${m.range52wSince}`);
+  return lines.join('\n');
+}
+
+/** The table cell: the percent as text (so sorting, filters and exports keep working) over a thin bar of the same value. */
+function range52wCellHtml(metrics: any, tdClass: string): string {
+  const m = metrics && typeof metrics === 'object' ? metrics : {};
+  const position = range52wNumber(m.range52w);
+  // a fund with less than 52 weeks of history gets an amber bar instead of a blue one; the text stays the bare percent
+  const young = position !== null && m.range52wSince ? ' range52w-young' : '';
+  const bar = position === null ? '' : ` range52w-cell${young}" style="--range52w:${Math.min(100, Math.max(0, position))}%`;
+  return `<td class="${tdClass}${bar}" title="${escapeHtml(range52wTitle(m))}">${range52wText(position)}</td>`;
+}
+// ---- end of 52-week range ----
 
 init();
 
