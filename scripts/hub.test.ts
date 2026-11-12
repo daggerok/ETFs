@@ -59,3 +59,16 @@ describe('distributions sheet', () => {
     expect(first.map((row) => row.join(' '))).toEqual(['2026-06-29 $0.155500']);
   });
 });
+
+// src/brands.json is published next to the page (https://daggerok.github.io/ETFs/brands.json); the Stocks screener reads its
+// ETF brand list from there, so it must stay equal to the BRANDS list the hub itself uses (same entries, same order).
+describe('brands.json', () => {
+  test('equals the BRANDS list of main.tsx', () => {
+    const published: unknown = JSON.parse(readFileSync(`${__dirname}/../src/brands.json`, 'utf8'));
+    const start = main.indexOf('const BRANDS: Brand[] = ');
+    const end = main.indexOf('];', start);
+    const brands: unknown = start > 0 && end > start ? new Function(`return ${main.slice(start + 'const BRANDS: Brand[] = '.length, end + 1)};`)() : null;
+    expect(Array.isArray(brands) && brands.length === 29).toBe(true);
+    expect(published).toEqual(brands);
+  });
+});
