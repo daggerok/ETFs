@@ -40,6 +40,7 @@ type WatchlistRow = Record<string, any> & {
 
 // Brand registry: repo folder, display name and feed slug (api/<slug>/index.json).
 // Generated from .claude/tools/etf-std/registry.json and the real api/<slug> folder names.
+// The same list is published as src/brands.json (read by the Stocks screener); scripts/hub.test.ts keeps both equal.
 const BRANDS: Brand[] = [
   { repo: "AAM", brand: "AAM", slug: "aam", issuerLabel: "aamlive.com", issuerUrl: "https://www.aamlive.com/ETF" },
   { repo: "aberdeen", brand: "abrdn (Aberdeen)", slug: "aberdeen", issuerLabel: "aberdeeninvestments.com", issuerUrl: "https://www.aberdeeninvestments.com/en-us/investor/funds/etfs" },

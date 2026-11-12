@@ -1,0 +1,205 @@
+[
+  {
+    "repo": "AAM",
+    "brand": "AAM",
+    "slug": "aam",
+    "issuerLabel": "aamlive.com",
+    "issuerUrl": "https://www.aamlive.com/ETF"
+  },
+  {
+    "repo": "aberdeen",
+    "brand": "abrdn (Aberdeen)",
+    "slug": "aberdeen",
+    "issuerLabel": "aberdeeninvestments.com",
+    "issuerUrl": "https://www.aberdeeninvestments.com/en-us/investor/funds/etfs"
+  },
+  {
+    "repo": "Amplify",
+    "brand": "Amplify",
+    "slug": "amplify",
+    "issuerLabel": "amplifyetfs.com",
+    "issuerUrl": "https://amplifyetfs.com/"
+  },
+  {
+    "repo": "ARK",
+    "brand": "ARK Invest",
+    "slug": "ark",
+    "issuerLabel": "ark-funds.com",
+    "issuerUrl": "https://www.ark-funds.com/our-etfs/"
+  },
+  {
+    "repo": "Capital-Group",
+    "brand": "Capital Group",
+    "slug": "capital-group",
+    "issuerLabel": "capitalgroup.com",
+    "issuerUrl": "https://www.capitalgroup.com/advisor/investments/exchange-traded-funds.html"
+  },
+  {
+    "repo": "Fidelity",
+    "brand": "Fidelity",
+    "slug": "fidelity",
+    "issuerLabel": "fidelity.com",
+    "issuerUrl": "https://www.fidelity.com/etfs"
+  },
+  {
+    "repo": "First-Trust",
+    "brand": "First Trust",
+    "slug": "firsttrust",
+    "issuerLabel": "ftportfolios.com",
+    "issuerUrl": "https://www.ftportfolios.com/Retail/etf/etflist.aspx"
+  },
+  {
+    "repo": "Franklin",
+    "brand": "Franklin Templeton",
+    "slug": "franklin",
+    "issuerLabel": "franklintempleton.com",
+    "issuerUrl": "https://www.franklintempleton.com/investments/options/exchange-traded-funds"
+  },
+  {
+    "repo": "Global-X",
+    "brand": "Global X",
+    "slug": "globalx",
+    "issuerLabel": "globalxetfs.com/explore",
+    "issuerUrl": "https://www.globalxetfs.com/explore"
+  },
+  {
+    "repo": "Goldman-Sachs",
+    "brand": "Goldman Sachs",
+    "slug": "goldmansachs",
+    "issuerLabel": "am.gs.com",
+    "issuerUrl": "https://am.gs.com/en-us/individual/funds?locale=en-us&audience=individual&sf=funds&filters=funds%7CETF&limit=100"
+  },
+  {
+    "repo": "Invesco",
+    "brand": "Invesco",
+    "slug": "invesco",
+    "issuerLabel": "invesco.com",
+    "issuerUrl": "https://www.invesco.com/us/en/financial-products/etfs.html"
+  },
+  {
+    "repo": "iShares",
+    "brand": "iShares",
+    "slug": "ishares",
+    "issuerLabel": "ishares.com",
+    "issuerUrl": "https://www.ishares.com/"
+  },
+  {
+    "repo": "JPMorgan",
+    "brand": "JPMorgan",
+    "slug": "jpmorgan",
+    "issuerLabel": "am.jpmorgan.com",
+    "issuerUrl": "https://am.jpmorgan.com/us/en/asset-management/adv/products/fund-explorer/etf"
+  },
+  {
+    "repo": "Neos",
+    "brand": "NEOS",
+    "slug": "neos",
+    "issuerLabel": "neosfunds.com",
+    "issuerUrl": "https://neosfunds.com/#explore-etfs"
+  },
+  {
+    "repo": "Northern-Trust",
+    "brand": "Northern Trust",
+    "slug": "northerntrust",
+    "issuerLabel": "etfs.ntam.northerntrust.com",
+    "issuerUrl": "https://etfs.ntam.northerntrust.com/us/en/individual/funds"
+  },
+  {
+    "repo": "Pacer",
+    "brand": "Pacer ETFs",
+    "slug": "pacer",
+    "issuerLabel": "paceretfs.com",
+    "issuerUrl": "https://www.paceretfs.com/products/"
+  },
+  {
+    "repo": "Parametric",
+    "brand": "Parametric",
+    "slug": "parametric",
+    "issuerLabel": "eatonvance.com",
+    "issuerUrl": "https://www.eatonvance.com/products/etfs.html"
+  },
+  {
+    "repo": "ProShares",
+    "brand": "ProShares",
+    "slug": "proshares",
+    "issuerLabel": "proshares.com",
+    "issuerUrl": "https://www.proshares.com/our-etfs/find-proshares-etfs"
+  },
+  {
+    "repo": "Schwab",
+    "brand": "Schwab",
+    "slug": "schwab",
+    "issuerLabel": "schwabassetmanagement.com",
+    "issuerUrl": "https://www.schwabassetmanagement.com/products"
+  },
+  {
+    "repo": "SP-Funds",
+    "brand": "SP Funds",
+    "slug": "spfunds",
+    "issuerLabel": "sp-funds.com",
+    "issuerUrl": "https://www.sp-funds.com/"
+  },
+  {
+    "repo": "SPDR",
+    "brand": "SPDR",
+    "slug": "spdr",
+    "issuerLabel": "ssga.com",
+    "issuerUrl": "https://www.ssga.com/us/en/intermediary/etfs/fund-finder"
+  },
+  {
+    "repo": "Sprott",
+    "brand": "Sprott ETFs",
+    "slug": "sprott",
+    "issuerLabel": "sprottetfs.com",
+    "issuerUrl": "https://sprottetfs.com/"
+  },
+  {
+    "repo": "Tema",
+    "brand": "Tema ETFs",
+    "slug": "tema",
+    "issuerLabel": "temaetfs.com",
+    "issuerUrl": "https://temaetfs.com/funds"
+  },
+  {
+    "repo": "Themes",
+    "brand": "Themes ETFs",
+    "slug": "themes",
+    "issuerLabel": "themesetfs.com/etfs",
+    "issuerUrl": "https://themesetfs.com/etfs"
+  },
+  {
+    "repo": "VanEck",
+    "brand": "VanEck",
+    "slug": "vaneck",
+    "issuerLabel": "vaneck.com",
+    "issuerUrl": "https://www.vaneck.com/us/en/etf-mutual-fund-finder/"
+  },
+  {
+    "repo": "Vanguard",
+    "brand": "Vanguard",
+    "slug": "vanguard",
+    "issuerLabel": "investor.vanguard.com",
+    "issuerUrl": "https://investor.vanguard.com/etf/list"
+  },
+  {
+    "repo": "VictoryShares",
+    "brand": "VictoryShares",
+    "slug": "victoryshares",
+    "issuerLabel": "vcm.com VictoryShares ETFs",
+    "issuerUrl": "https://www.vcm.com/products/victoryshares-etfs/victoryshares-etfs-list"
+  },
+  {
+    "repo": "WisdomTree",
+    "brand": "WisdomTree",
+    "slug": "wisdomtree",
+    "issuerLabel": "wisdomtree.com",
+    "issuerUrl": "https://www.wisdomtree.com/investments"
+  },
+  {
+    "repo": "Xtrackers",
+    "brand": "Xtrackers",
+    "slug": "xtrackers",
+    "issuerLabel": "etf.dws.com",
+    "issuerUrl": "https://etf.dws.com/en-us/etf-products/"
+  }
+]

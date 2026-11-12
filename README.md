@@ -107,6 +107,8 @@ git diff --check
 
 The hub has no updater, tests, data files or data workflow (its only workflow publishes the Pages site); the data is updated in the sibling repositories.
 
+The brand list is also published as `brands.json` next to the page (`repo`, `brand`, `slug`, `issuerLabel`, `issuerUrl` per brand, the same order as the hub). The Stocks screener reads it from https://daggerok.github.io/ETFs/brands.json to load the 29 ETF feeds, so a new brand reaches Stocks with the next hub deploy. `src/brands.json` must stay equal to the `BRANDS` list in `src/main.tsx`; `bun test` checks it
+
 ## Brands table
 
 | Brand | Where to get the data |
