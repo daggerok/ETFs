@@ -125,18 +125,25 @@ update_repo() {
   return 1
 }
 
-echo "Updating the data of ${#LIST[@]} repo(s), one after another ..."
+# 1h02m03s, 4m05s or 7s
+dur() { local t=$1; if [ "$t" -ge 3600 ]; then printf '%dh%02dm%02ds' $((t / 3600)) $((t % 3600 / 60)) $((t % 60));
+  elif [ "$t" -ge 60 ]; then printf '%dm%02ds' $((t / 60)) $((t % 60)); else printf '%ds' "$t"; fi; }
+now() { date '+%Y-%m-%d %H:%M:%S'; }
+RUN_START=$(now); RUN_SECONDS=$SECONDS
+echo "Updating the data of ${#LIST[@]} repo(s), one after another, started $RUN_START ..."
 for repo in "${LIST[@]}"; do
   echo "========================================"
   echo "$repo"
   echo "========================================"
   UPDATE_STATE=""
-  started=$SECONDS
+  started=$SECONDS; start_at=$(date '+%H:%M:%S')
+  echo "Started $(now)"
   ( update_repo "$repo"; echo "$?|$UPDATE_STATE" > "$OUT/$repo" )
   IFS='|' read -r code state < "$OUT/$repo" 2>/dev/null || { code=1; state=""; }
-  took=$((SECONDS - started))
-  if [ "$code" -eq 0 ]; then RESULTS+=("OK      $repo: ${state:-done} (${took}s)")
-  else RESULTS+=("FAILED  $repo: ${state:-not committed} (exit $code, ${took}s)"); FAILED=$((FAILED + 1)); fi
+  took=$(dur $((SECONDS - started))); end_at=$(date '+%H:%M:%S')
+  echo "Finished $(now), took $took"
+  if [ "$code" -eq 0 ]; then RESULTS+=("OK      $repo: ${state:-done} ($start_at -> $end_at, $took)")
+  else RESULTS+=("FAILED  $repo: ${state:-not committed} (exit $code, $start_at -> $end_at, $took)"); FAILED=$((FAILED + 1)); fi
   echo
 done
 
@@ -145,6 +152,7 @@ echo "Summary"
 echo "========================================"
 printf '%s\n' "${RESULTS[@]}"
 echo "Done: $((${#LIST[@]} - FAILED)) ok, $FAILED failed."
+echo "Started $RUN_START, finished $(now), took $(dur $((SECONDS - RUN_SECONDS)))"
 [ "$FAILED" -eq 0 ] || exit 1
 }
 exit $?
