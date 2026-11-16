@@ -1,10 +1,19 @@
 #!/usr/bin/env bash
-# Refresh the data of the sibling ETF repos cloned in the hub folder (the parent of scripts/), one repo after another,
+# Refresh the data of the repos cloned in the parent folder of scripts/ (the ETFs hub: the ETF brands; investments:
+# Stocks and the ETF brands; a repo without data, like the hub itself, is not listed), one repo after another,
 # with each repo's own updater, then commit and push it the way its update-data.yml workflow does:
 #   pull main fast-forward -> bun install --frozen-lockfile -> ./scripts/update-data.ts
 #   -> git add api/<feed> -> commit "chore(data): update <Brand> ETF data" -> push (rebase and retry when main moved)
 # The feed folder and the commit message are read from the repo's .github/workflows/update-data.yml.
-# A repo that is not on main or has uncommitted changes is skipped and reported, never touched.
+# A repo that is not on main or has uncommitted changes outside its feed folder is skipped and reported, never touched.
+# Uncommitted changes inside the feed folder only are the leftover of an interrupted run (the updater writes, the
+# commit never came): they are discarded before the pull, since the updater regenerates them anyway.
+# A repo whose feed is not in git (Stocks: update-data.yml has no git add/commit and publishes with update-data.ts
+# --publish) commits nothing: pull, install, restore the published feed when api/<feed> is empty
+# (./scripts/update-data.ts --restore-from), run the updater (with --signals when its workflow does), then publish it
+# with ./scripts/update-data.ts --publish (skipped with --no-push). It runs after the other repos.
+# Each repo prints when it started and finished and how long it took; the summary repeats it per repo and for the run.
+# The same file is ETFs/scripts/update-data.sh (ETFs hub) and scripts/update-data.sh (investments): change both together.
 
 set -uo pipefail
 cd "$(dirname "$0")/.." || exit 1
@@ -54,13 +63,13 @@ done
 command -v git >/dev/null 2>&1 || die "git is required"
 command -v bun >/dev/null 2>&1 || die "bun is required (./scripts/install.sh installs it)"
 
-# every cloned ETF repo in the hub folder: a git repo with its own updater and data workflow
+# every cloned repo with data in this folder: a git repo with its own updater and data workflow
 CLONED=()
 for dir in */; do
   dir="${dir%/}"
   [ -d "$dir/.git" ] && [ -f "$dir/scripts/update-data.ts" ] && [ -f "$dir/.github/workflows/update-data.yml" ] && CLONED+=("$dir")
 done
-[ ${#CLONED[@]} -gt 0 ] || die "no cloned ETF repos here: run ./scripts/install.sh first"
+[ ${#CLONED[@]} -gt 0 ] || die "no cloned data repos here: run ./scripts/install.sh first"
 
 if [ ${#SELECTED[@]} -gt 0 ]; then
   LIST=()
@@ -81,23 +90,67 @@ RESULTS=()
 FAILED=0
 OUT="$(mktemp -d)"; trap 'rm -rf "$OUT"' EXIT
 
+# the reason a repo failed: printed in its section and shown again in the summary line
+fail() { UPDATE_STATE="$1"; echo "$1"; }
+
+# the feed is not in git and the workflow publishes it with --publish (Stocks): update it locally and publish, commit nothing
+publishes_itself() { grep -qE 'update-data\.ts --publish|actions/upload-pages-artifact' "$1/.github/workflows/update-data.yml"; }
+update_local_only() {
+  local repo="$1" workflow="$2" feed branch code
+  feed="$(sed -nE 's/^[[:space:]]*path: (api\/[A-Za-z0-9._-]+)[[:space:]]*$/\1/p' "$workflow" | head -1)"
+  [ -n "$feed" ] || { fail "cannot read the feed folder from $workflow"; return 1; }
+  local signals=()
+  grep -qE 'update-data\.ts[^#]*--signals' "$workflow" && signals=(--signals)
+  cd "$repo" || { fail "cannot enter $repo"; return 1; }
+  branch="$(git branch --show-current)"
+  [ "$branch" = "main" ] || { fail "on '${branch:-detached HEAD}', not main: skipped (switch to main first)"; return 1; }
+  if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
+    fail "uncommitted changes: skipped (commit or stash them first)"; git status --short --untracked-files=no; return 1
+  fi
+  echo "Pulling main (fast-forward only)..."
+  git pull --ff-only origin main || { fail "git pull --ff-only failed (local main diverged from origin?)"; return 1; }
+  echo "Installing packages..."
+  bun install --frozen-lockfile || { fail "bun install --frozen-lockfile failed"; return 1; }
+  if [ ! -f "$feed/index.json" ]; then
+    echo "$feed is empty: restoring the published feed first (./scripts/update-data.ts --restore-from) ..."
+    bun ./scripts/update-data.ts --restore-from || { fail "restoring the published $feed failed"; return 1; }
+  fi
+  echo "Running ./scripts/update-data.ts ${signals[*]-}..."
+  bun ./scripts/update-data.ts ${signals[@]+"${signals[@]}"}
+  code=$?
+  [ $code -eq 0 ] || { fail "update-data.ts exited $code: $feed updated locally, not published"; return $code; }
+  if [ "$PUSH" -eq 0 ]; then UPDATE_STATE="$feed updated locally, not published (--no-push)"; return 0; fi
+  echo "Publishing (./scripts/update-data.ts --publish) ..."
+  bun ./scripts/update-data.ts --publish || { fail "$feed updated locally, update-data.ts --publish failed"; return 1; }
+  UPDATE_STATE="$feed updated and published, nothing committed"
+}
+
 update_repo() {
   local repo="$1" workflow feed message branch attempt code
   workflow="$repo/.github/workflows/update-data.yml"
   feed="$(sed -nE 's/^[[:space:]]*git add (api\/[A-Za-z0-9._-]+).*/\1/p' "$workflow" | head -1)"
   message="$(sed -nE 's/^[[:space:]]*git commit -m "([^"]+)".*/\1/p' "$workflow" | head -1)"
-  [ -n "$feed" ] && [ -n "$message" ] || { echo "cannot read the feed folder or the commit message from $workflow"; return 1; }
+  if [ -z "$feed" ] && publishes_itself "$repo"; then
+    update_local_only "$repo" "$workflow"; return $?
+  fi
+  [ -n "$feed" ] && [ -n "$message" ] || { fail "cannot read the feed folder or the commit message from $workflow"; return 1; }
 
-  cd "$repo" || return 1
+  cd "$repo" || { fail "cannot enter $repo"; return 1; }
   branch="$(git branch --show-current)"
-  [ "$branch" = "main" ] || { echo "on '${branch:-detached HEAD}', not main: skipped (switch to main first)"; return 1; }
-  [ -z "$(git status --porcelain --untracked-files=no)" ] || { echo "uncommitted changes: skipped (commit or stash them first)"; git status --short --untracked-files=no; return 1; }
-  [ -z "$(git status --porcelain -- "$feed")" ] || { echo "untracked files in $feed: skipped"; return 1; }
+  [ "$branch" = "main" ] || { fail "on '${branch:-detached HEAD}', not main: skipped (switch to main first)"; return 1; }
+  if [ -n "$(git status --porcelain --untracked-files=no -- . ":(exclude)$feed")" ]; then
+    fail "uncommitted changes outside $feed: skipped (commit or stash them first)"; git status --short --untracked-files=no -- . ":(exclude)$feed"; return 1
+  fi
+  if [ -n "$(git status --porcelain -- "$feed")" ]; then
+    # only the data folder is dirty: an earlier run wrote it and was interrupted before the commit
+    echo "leftover data of an interrupted run in $feed: discarded, the updater regenerates it"
+    git checkout -q -- "$feed" && git clean -qfd -- "$feed" || { fail "cannot discard the leftover data in $feed"; return 1; }
+  fi
 
   echo "Pulling main (fast-forward only)..."
-  git pull --ff-only origin main || return 1
+  git pull --ff-only origin main || { fail "git pull --ff-only failed (local main diverged from origin?)"; return 1; }
   echo "Installing packages..."
-  bun install --frozen-lockfile || return 1
+  bun install --frozen-lockfile || { fail "bun install --frozen-lockfile failed"; return 1; }
 
   echo "Running ./scripts/update-data.ts ..."
   bun ./scripts/update-data.ts
@@ -105,25 +158,33 @@ update_repo() {
   # like the workflow: a run that failed for some funds still keeps every fund complete, so its data is committed
   [ $code -eq 0 ] || echo "update-data.ts exited with $code: committing what it wrote, like the workflow"
 
-  git add "$feed" || return 1
+  git add "$feed" || { fail "git add $feed failed"; return 1; }
   if git diff --cached --quiet -- "$feed"; then
     echo "$feed is already up to date"
-    UPDATE_STATE="unchanged"
+    UPDATE_STATE="unchanged$( [ $code -eq 0 ] || echo ", update-data.ts exited $code")"
     return $code
   fi
-  git commit -q -m "$message" -- "$feed" || return 1
+  git commit -q -m "$message" -- "$feed" || { fail "git commit failed"; return 1; }
   UPDATE_STATE="committed $(git rev-parse --short HEAD)"
+  [ $code -eq 0 ] || UPDATE_STATE="$UPDATE_STATE (update-data.ts exited $code, some funds failed: see the section above)"
   [ "$PUSH" -eq 1 ] || { UPDATE_STATE="$UPDATE_STATE, not pushed (--no-push)"; return $code; }
   # main may have moved while the updater ran (a CI data commit, a merge): rebase the data commit and retry
   for attempt in 1 2 3 4; do
     if git push -q origin main; then UPDATE_STATE="$UPDATE_STATE, pushed"; return $code; fi
     echo "push rejected: rebasing onto origin/main (attempt $attempt)"
-    git pull --rebase -q origin main || { git rebase --abort 2>/dev/null; echo "rebase failed: the data commit stays local"; return 1; }
+    git pull --rebase -q origin main || { git rebase --abort 2>/dev/null; fail "rebase onto origin/main failed: the data commit stays local"; return 1; }
     UPDATE_STATE="committed $(git rev-parse --short HEAD)"
   done
-  echo "push failed 4 times: the data commit stays local"
+  fail "push failed 4 times: the data commit stays local"
   return 1
 }
+
+# a repo that publishes itself (Stocks) reads the other feeds when it publishes: it goes last
+FIRST=(); LAST=()
+for repo in "${LIST[@]}"; do
+  if publishes_itself "$repo"; then LAST+=("$repo"); else FIRST+=("$repo"); fi
+done
+LIST=(${FIRST[@]+"${FIRST[@]}"} ${LAST[@]+"${LAST[@]}"})
 
 # 1h02m03s, 4m05s or 7s
 dur() { local t=$1; if [ "$t" -ge 3600 ]; then printf '%dh%02dm%02ds' $((t / 3600)) $((t % 3600 / 60)) $((t % 60));
