@@ -18,7 +18,7 @@
 // dependency (package.json "stocks": "github:daggerok/Stocks#<commit>"), never copied; README "ETF screener" says how to bump the pin
 import { createScreenerUi, screenerStorageKeys } from 'stocks/src/core/screener-ui';
 import { createI18n, pick as pickText } from 'stocks/src/core/i18n';
-import { createUniverse, etfRow, Preset, ScreenerRow, Universe } from 'stocks/src/core/screener';
+import { createUniverse, etfClasses, EtfClasses, etfRow, Preset, ScreenerRow, Universe } from 'stocks/src/core/screener';
 import { computeScoring, ScoringConfig, ScoringResult, validateScoringConfig, whyText, withScoreMetrics } from 'stocks/src/core/scoring';
 
 // =========================================================================
@@ -93,7 +93,7 @@ const COLUMN_FILTERS_KEY = 'etf-hub-column-filters';
 const COLUMN_TYPES_KEY = 'etf-hub-column-types';
 const SHOW_FILTERS_KEY = 'etf-hub-show-filters';
 const STICKY_RANK_KEY = 'etf-hub-sticky-rank';
-const SCREENER_PREFIX = 'etfs'; // ETF screener: localStorage etfs-screener, etfs-screener-variants, etfs-own-presets
+const SCREENER_PREFIX = 'etfs'; // ETF screener: localStorage etfs-screener, etfs-screener-variants, etfs-screener-pickers, etfs-own-presets
 const SCREENER_KEYS = screenerStorageKeys(SCREENER_PREFIX);
 const FILTER_DEBOUNCE_MS = 250;
 const GITHUB_PAGES_ORIGIN = 'https://daggerok.github.io/';
@@ -1238,8 +1238,13 @@ function onStoreChanged(): void {
   el.searchInput.disabled = false;
   [el.copyBtn, el.exportCsvBtn, el.exportTxtBtn, el.resetBtn].forEach(button => { button.disabled = false; });
   applyRestoredTab();
-  screener.render(); // chip counts over the new rows, before the table (its rows pass the chosen presets)
-  render();
+  if (Object.keys(screener.scr.chips).length) {
+    screener.render(); // chip counts over the new rows, before the table (its rows pass the chosen presets)
+    render();
+  } else {
+    render(); // no chip chosen: the table does not need the presets, its rows come first and the chip counts one frame later
+    requestAnimationFrame(() => screener.render());
+  }
   void ensureHoldingsForSelection();
 }
 
@@ -4511,6 +4516,7 @@ const RESET_ITEMS: ResetItem[] = [
   { id: 'blacklist', label: 'Blacklist', keys: [BLACKLIST_KEY], reset: () => { state.blacklist.clear(); blacklistVersion += 1; } },
   { id: 'screener', label: 'Screener: chosen presets and edits (own presets are kept)', keys: [SCREENER_KEYS.screener], reset: () => screener.reset() },
   { id: 'screener-variants', label: 'Screener horizons (Stable growth 1Y to 10Y)', keys: [SCREENER_KEYS.variants], reset: () => screener.resetVariants() },
+  { id: 'screener-pickers', label: 'Screener chip choices (benchmark, horizon, level)', keys: [SCREENER_KEYS.pickers], reset: () => screener.resetPickers() },
 ];
 
 /** Resets the chosen items to the first-visit state at once. */
@@ -5216,11 +5222,15 @@ function bindEvents(): void {
 // of all 29 brands (category percentiles), Entry and Dividend plus Why in the table. No scores snapshot yet (stage H3)
 
 const SCORING_URL = './scoring.json';
+// ETF classes of the Stocks core (benchmark plan 5 and 6): geared, index family, sector or theme, qualified dividends; copied to dist at build
+const ETF_CLASSES_URL = './etf-classes.json';
+const QDI_URL = './qdi.json';
 const SCORE_NUM_KEYS = ['scoreEntry', 'scoreDividend', 'statusScore'];
 // English only: the hub has no language switch, and the Stocks locale key is shared on daggerok.github.io
 const hubI18n = createI18n({ storage: null });
 
 let scoringConfig: ScoringConfig | null = null; // node_modules/stocks/src/core/scoring/config.json as dist/scoring.json
+let classes: EtfClasses | null = null; // etf-classes.json and qdi.json compiled once; null until loaded (rows then have no classes)
 let scored: { version: number; universe: Universe; rows: ScreenerRow[]; result: ScoringResult | null } | null = null;
 let whyCache: { version: number; texts: string[] } | null = null;
 
@@ -5234,7 +5244,7 @@ function scoredUniverse(): Universe | null {
   const s = store;
   if (!s) return null;
   if (scored && scored.version === s.version) return scored.universe;
-  const rows = s.raw.map((raw: any) => etfRow(raw));
+  const rows = s.raw.map((raw: any) => etfRow(raw, null, classes));
   let result: ScoringResult | null = null;
   let universe: Universe | null = null;
   const config = scoringConfig;
@@ -5315,6 +5325,7 @@ const screener = createScreenerUi({
   rerender: () => render(),
   typeChosen: () => {},
   statusParts: () => screenerStatusParts(),
+  headNote: () => marketStateHtml(),
   peersChanging: () => {},
   peersChanged: () => {},
 });
@@ -5341,6 +5352,39 @@ function screenerChoiceText(): string {
   return names.join(screener.scr.any ? ' or ' : ', ');
 }
 
+/**
+ * Market state line (benchmark plan 4.3, owner request 5 "SPY at its ATH while other ETFs or sectors are down"): SPY and QQQ distance
+ * from their all-time high close with a state word (at the high from -3%, pullback to -10%, correction to -20%, bear market below).
+ * Source: pctFromAth and athDate of the SPY (SPDR) and QQQ (Invesco) rows of the brand feeds; a missing row or value hides that half
+ */
+function marketStateHtml(): string {
+  const s = store;
+  if (!s) return '';
+  const parts: string[] = [];
+  ['SPY', 'QQQ'].forEach(ticker => {
+    const raw = s.raw.filter((r: any) => r && String(r.ticker).toUpperCase() === ticker)[0];
+    const metrics = raw && raw.metrics ? raw.metrics : null;
+    const pct = metrics && typeof metrics.pctFromAth === 'number' && Number.isFinite(metrics.pctFromAth) ? metrics.pctFromAth : null;
+    if (pct === null) return;
+    const state = pct >= -3 ? 'high' : pct >= -10 ? 'pullback' : pct >= -20 ? 'correction' : 'bear';
+    const date = metrics && typeof metrics.athDate === 'string' ? metrics.athDate : DASH;
+    const text = hubI18n.t('market.part', { ticker, pct: pct.toFixed(1), date, state: hubI18n.t(`market.${state}`) });
+    const cut = text.lastIndexOf(': ');
+    parts.push(`<span data-market="${ticker}">${escapeHtml(text.slice(0, cut + 2))}<span class="is-${state}">${escapeHtml(text.slice(cut + 2))}</span></span>`);
+  });
+  return parts.length ? `<span title="${escapeHtml(hubI18n.t('market.tip'))}">${parts.join(' · ')}</span>` : '';
+}
+
+/** etf-classes.json and qdi.json next to the page; without them the rows have no classes (the chips on them show no matches) */
+async function loadEtfClasses(): Promise<void> {
+  try {
+    const [file, qdi] = await Promise.all([fetchJson(ETF_CLASSES_URL), fetchJson(QDI_URL).catch(() => null)]);
+    classes = etfClasses(file, qdi);
+  } catch (error) {
+    console.warn(`ETF classes unavailable: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
 /** The scoring config next to the page; a missing or invalid one leaves the score columns empty with a warning */
 async function loadScoringConfig(): Promise<void> {
   try {
@@ -5354,9 +5398,9 @@ async function loadScoringConfig(): Promise<void> {
 }
 
 async function loadScreener(): Promise<void> {
-  await Promise.all([loadScoringConfig(), screener.loadPresets()]);
+  await Promise.all([loadScoringConfig(), loadEtfClasses(), screener.loadPresets()]);
   const message = screener.applyHashPreset();
-  if (store && scoringConfig) { rebuildDirty = true; rebuildNow(); } // new store version: the score columns are filled and their types detected
+  if (store && (scoringConfig || classes)) { rebuildDirty = true; rebuildNow(); } // new store version: the score columns are filled and their types detected
   screener.changed(message);
 }
 
