@@ -14,6 +14,13 @@
  * `!`, no interfaces or enums.
  */
 
+// The ETF screener (owner 2026-11-16: "on etfs only etfs"): panel, engine, presets and scoring come from the Stocks core as a git
+// dependency (package.json "stocks": "github:daggerok/Stocks#<commit>"), never copied; README "ETF screener" says how to bump the pin
+import { createScreenerUi, screenerStorageKeys } from 'stocks/src/core/screener-ui';
+import { createI18n, pick as pickText } from 'stocks/src/core/i18n';
+import { createUniverse, etfRow, Preset, ScreenerRow, Universe } from 'stocks/src/core/screener';
+import { computeScoring, ScoringConfig, ScoringResult, validateScoringConfig, whyText, withScoreMetrics } from 'stocks/src/core/scoring';
+
 // =========================================================================
 // 1. Types, constants, brand registry & column tooltips
 // =========================================================================
@@ -86,6 +93,8 @@ const COLUMN_FILTERS_KEY = 'etf-hub-column-filters';
 const COLUMN_TYPES_KEY = 'etf-hub-column-types';
 const SHOW_FILTERS_KEY = 'etf-hub-show-filters';
 const STICKY_RANK_KEY = 'etf-hub-sticky-rank';
+const SCREENER_PREFIX = 'etfs'; // ETF screener: localStorage etfs-screener, etfs-screener-variants, etfs-own-presets
+const SCREENER_KEYS = screenerStorageKeys(SCREENER_PREFIX);
 const FILTER_DEBOUNCE_MS = 250;
 const GITHUB_PAGES_ORIGIN = 'https://daggerok.github.io/';
 const BRAND_CONCURRENCY = 8; // parallel brand index requests at startup
@@ -155,6 +164,9 @@ const COLUMN_TOOLTIPS: Record<string, string> = {
   'CAGR 3Y': 'CAGR 3Y - annualized total return over 3 years.',
   'CAGR 5Y': 'CAGR 5Y - annualized total return over 5 years.',
   'CAGR 10Y': 'CAGR 10Y - annualized total return over 10 years.',
+  'Entry Score': 'Entry point score 0-100 (Stocks core scoring): drop from the 52-week high and the all-time high, 52-week range position, sigma from the 60-day mean; a percentile inside the fund category over all 29 brands (all ETFs when the category is small). Higher = a better entry point.',
+  'Dividend Score': 'Dividend score 0-100 (Stocks core scoring): payment streak, no cuts in 10 years, 5-year dividend growth, yield; a percentile inside the fund category over all 29 brands. Payers only, a dash for a fund without dividends.',
+  Why: 'Why the fund got its scores and status: archetype, the status rule and the notes of the scoring config (Stocks core). Sorts by the total score behind it. Hover a cell for the full text.',
   'SI Ann.': 'Since-inception annualized total return (blank when the issuer publishes none and the available history is insufficient).',
   Source: 'Source of the returns (metrics.returnsBasis). NAV = official issuer NAV total returns; mixed = official with gaps derived or estimated; derived = computed from price or NAV history (an estimate, not a standardized figure); n/a = unavailable. Hover a badge for the full text.',
   'Return As Of': 'performanceAsOf - the date the returns are calculated as of (issuer table date, or the last price date for derived returns). Not the NAV date. A dash means unknown.',
@@ -236,6 +248,7 @@ const el = {
   busyLabel: byId('busy-label'),
   staticLoadSentinel: byId('static-load-sentinel'),
   staticLoadStatus: byId('static-load-status'),
+  screenerPanel: byId('screener-panel'),
 };
 
 type AppState = {
@@ -1103,7 +1116,7 @@ function buildStore(): Store {
   const n = items.length;
   const num: Record<string, Float64Array> = {};
   const newArray = (): Float64Array => new Float64Array(n).fill(NaN);
-  [...METRIC_KEYS, ...FUND_NUM_KEYS, 'holdings', 'history', 'perfTs', 'asOfTs', 'inceptionTs'].forEach(key => { num[key] = newArray(); });
+  [...METRIC_KEYS, ...FUND_NUM_KEYS, ...SCORE_NUM_KEYS, 'holdings', 'history', 'perfTs', 'asOfTs', 'inceptionTs'].forEach(key => { num[key] = newArray(); });
   const basisCls = newArray();
   const brandIdx = new Uint8Array(n);
   const catId = new Uint16Array(n);
@@ -1207,6 +1220,7 @@ function rebuildNow(): void {
   store = buildStore();
   viewCache = null;
   baselineCache = null;
+  scoredUniverse(); // the score columns of the new store before anything reads them
   onStoreChanged();
 }
 
@@ -1224,6 +1238,7 @@ function onStoreChanged(): void {
   el.searchInput.disabled = false;
   [el.copyBtn, el.exportCsvBtn, el.exportTxtBtn, el.resetBtn].forEach(button => { button.disabled = false; });
   applyRestoredTab();
+  screener.render(); // chip counts over the new rows, before the table (its rows pass the chosen presets)
   render();
   void ensureHoldingsForSelection();
 }
@@ -1664,7 +1679,7 @@ function nonBlacklistedIds(): number[] {
 
 // ---- column filters of the catalog: column model, detected types, compiled expressions -------
 
-type CatalogColumn = { key: string; label: string; kind: 'text' | 'num' | 'basis' | 'date'; fmt: 'text' | 'pct' | 'money' | 'int' | 'nav' | 'ter' | 'price' };
+type CatalogColumn = { key: string; label: string; kind: 'text' | 'num' | 'basis' | 'date'; fmt: 'text' | 'pct' | 'money' | 'int' | 'nav' | 'ter' | 'price' | 'score' };
 
 /** The columns of the catalog table in display order; the header, the filter row and the filters all read this list (key = sort key). */
 const CATALOG_COLUMNS: CatalogColumn[] = [
@@ -1672,6 +1687,9 @@ const CATALOG_COLUMNS: CatalogColumn[] = [
   { key: 'brand', label: 'Brand', kind: 'text', fmt: 'text' },
   { key: 'name', label: 'Fund Name', kind: 'text', fmt: 'text' },
   { key: 'category', label: 'Type', kind: 'text', fmt: 'text' },
+  { key: 'scoreEntry', label: 'Entry Score', kind: 'num', fmt: 'score' },
+  { key: 'scoreDividend', label: 'Dividend Score', kind: 'num', fmt: 'score' },
+  { key: 'why', label: 'Why', kind: 'text', fmt: 'text' },
   { key: 'navValue', label: 'NAV', kind: 'num', fmt: 'nav' },
   { key: 'range52w', label: '52W Range', kind: 'num', fmt: 'pct' },
   { key: 'week52Low', label: '52W Low', kind: 'num', fmt: 'price' },
@@ -1720,12 +1738,12 @@ function catalogCellText(col: CatalogColumn, id: number): string {
   let text = '';
   if (col.kind === 'basis') text = BASIS_BADGES[Number.isFinite(s.basisCls[id]) ? String(s.basisCls[id]) : 'none'].label;
   else if (col.kind === 'date') text = String(col.key === 'perfTs' ? metrics.performanceAsOf || '' : col.key === 'inceptionTs' ? raw.inceptionDate || '' : raw.asOfDate || '');
-  else if (col.kind === 'text') text = col.key === 'ticker' ? s.ticker[id] : col.key === 'brand' ? s.brandText[id] : col.key === 'name' ? fundNameText(s.name[id], raw) : col.key === 'category' ? s.categoryText[id] : col.key === 'yieldBasis' ? yieldBasisLabel(s.yieldBasis[id]) : s.freqText[id];
+  else if (col.kind === 'text') text = col.key === 'ticker' ? s.ticker[id] : col.key === 'brand' ? s.brandText[id] : col.key === 'name' ? fundNameText(s.name[id], raw) : col.key === 'category' ? s.categoryText[id] : col.key === 'yieldBasis' ? yieldBasisLabel(s.yieldBasis[id]) : col.key === 'why' ? scoringWhy(id) : s.freqText[id];
   else if (col.fmt === 'nav') text = String(raw.nav || '');
   else if (col.fmt === 'ter') text = terText(id);
   else {
     const value = s.num[col.key][id];
-    text = col.fmt === 'pct' ? formatPercent(value) : col.fmt === 'money' ? formatMoney(value) : col.fmt === 'price' ? range52wPriceText(Number.isFinite(value) ? value : null) : formatInteger(value);
+    text = col.fmt === 'score' ? scoreText(value) : col.fmt === 'pct' ? formatPercent(value) : col.fmt === 'money' ? formatMoney(value) : col.fmt === 'price' ? range52wPriceText(Number.isFinite(value) ? value : null) : formatInteger(value);
   }
   return text === DASH ? '' : text.toLowerCase();
 }
@@ -1795,8 +1813,10 @@ function filterCatalogIds(): number[] {
   const terms = parseSearchTerms(catalogQuery());
   const catAllowed = state.hiddenCategories.size ? Uint8Array.from(s.categories, (name: string) => (state.hiddenCategories.has(name) ? 0 : 1)) : null;
   const staleCut = Date.now() - state.staleDays * DAY_MS;
+  const mask = screener.screenMask(); // rows that pass the chosen screener chips, null when none is chosen
   const out: number[] = [];
   for (let i = 0; i < s.n; i++) {
+    if (mask && mask[i] !== 1) continue;
     if (!allowed[s.brandIdx[i]]) continue;
     if (state.blacklist.has(s.keys[i])) continue;
     if (catAllowed && !catAllowed[s.catId[i]]) continue;
@@ -1830,6 +1850,7 @@ function sortArrayFor(key: string): Float64Array | null {
   if (!store) return null;
   const s = store;
   if (key === 'basisCls') return s.basisCls;
+  if (key === 'why') return s.num.statusScore; // Why sorts by the total score behind it, like Stocks
   if (s.num[key]) return s.num[key];
   if (!STRING_SORT_KEYS.includes(key)) return null;
   const cached = s.rankCache[key];
@@ -1876,7 +1897,7 @@ function catalogBaseline(): { ids: number[]; rank: Int32Array } {
   const sig = [
     s.version, hiddenBrandsSig(), blacklistVersion, hiddenCategoriesSig(), catalogQuery(),
     state.hideStale ? state.staleDays : 'off', state.sortKey, state.sortDir,
-    state.hideStale ? Math.floor(Date.now() / DAY_MS) : '',
+    state.hideStale ? Math.floor(Date.now() / DAY_MS) : '', screener.sig(),
   ].join('|');
   if (baselineCache && baselineCache.sig === sig) return baselineCache;
   const ids = sortIds(filterCatalogIds(), state.sortKey, state.sortDir);
@@ -2777,6 +2798,7 @@ function render(keepRows = true): void {
   else if (isDetailTab(state.activeTab)) renderDetailTable(detailTabKey(state.activeTab));
   else renderFundsTable();
   setCatalogColumnStyle(state.activeTab !== 'watchlist' && !isDetailTab(state.activeTab));
+  el.screenerPanel.hidden = state.activeTab === 'watchlist' || isDetailTab(state.activeTab); // the screener narrows only the ETF table
   renderFilterControls();
   fitTableHeight();
   syncHeadHeight();
@@ -3161,6 +3183,9 @@ function fundRowHtml(id: number, index: number): string {
           <td class="py-2.5 px-4 text-slate-600 dark:text-slate-300" title="${escapeHtml(BRANDS[s.brandIdx[id]].repo)}">${escapeHtml(s.brandText[id])}</td>
           <td class="py-2.5 px-4 text-slate-700 dark:text-slate-300 font-medium" title="${escapeHtml(s.name[id])}">${escapeHtml(s.name[id])}${closedBadgeHtml(raw)}</td>
           <td class="py-2.5 px-4 text-slate-600 dark:text-slate-300">${escapeHtml(s.categoryText[id] || DASH)}</td>
+          <td class="${numCls}">${scoreBadgeHtml(num.scoreEntry[id])}</td>
+          <td class="${numCls}">${scoreBadgeHtml(num.scoreDividend[id])}</td>
+          ${whyCellHtml(id)}
           <td class="${numCls}">${escapeHtml(raw.nav || DASH)}</td>
           ${range52wCellHtml(metrics, numCls)}
           <td class="${numCls}">${range52wPriceText(metrics.week52Low)}</td>
@@ -3200,7 +3225,7 @@ function terCell(id: number): string {
   return `<td class="py-2.5 px-4 text-right font-mono text-slate-700 dark:text-slate-300"${tip}>${escapeHtml(text)}</td>`;
 }
 
-const CATALOG_COLSPAN = 28;
+const CATALOG_COLSPAN = CATALOG_COLUMNS.length + CATALOG_LEADING_CELLS;
 
 function catalogMoreRowHtml(remaining: number): string {
   return `<tr id="catalog-more-row" class="cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-700/30 transition"><td colspan="${CATALOG_COLSPAN}" class="py-3 text-center text-xs text-slate-400 dark:text-slate-500">Scroll or click to load more rows… (${remaining.toLocaleString('en-US')} remaining)</td></tr>`;
@@ -3225,7 +3250,7 @@ function growCatalogChunk(): void {
 function renderFundsTable(): void {
   const ids = catalogIds();
   catalogVisibleIds = ids;
-  const sig = [state.sortKey, state.sortDir, catalogQuery(), hiddenCategoriesSig(), hiddenBrandsSig(), state.hideStale, state.staleDays, store ? store.version : 0, blacklistVersion, catalogFilterSig()].join('|');
+  const sig = [state.sortKey, state.sortDir, catalogQuery(), hiddenCategoriesSig(), hiddenBrandsSig(), state.hideStale, state.staleDays, store ? store.version : 0, blacklistVersion, catalogFilterSig(), screener.sig()].join('|');
   if (sig !== catalogChunkSig) {
     catalogChunkSig = sig;
     catalogRenderedCount = CATALOG_CHUNK;
@@ -3267,7 +3292,8 @@ function renderCatalogStatus(ids: number[]): void {
   const selected = selectedKeys().length;
   const queryText = catalogQuery() ? ` matching “${catalogQuery()}”` : '';
   const rankText = state.stickyRank && ids.length ? ` # = rank among ${catalogBaseline().ids.length.toLocaleString('en-US')} before the column filters.` : '';
-  setStatus(`Showing ${ids.length} ETF${ids.length === 1 ? '' : 's'}${queryText}.${selected ? ` ${selected} selected.` : ' No ETFs selected yet.'}${rankText}`, selected ? 'success' : 'info');
+  const screenText = Object.keys(screener.scr.chips).length ? ` passing the screener (${screenerChoiceText()})` : '';
+  setStatus(`Showing ${ids.length} ETF${ids.length === 1 ? '' : 's'}${queryText}${screenText}.${selected ? ` ${selected} selected.` : ' No ETFs selected yet.'}${rankText}`, selected ? 'success' : 'info');
   el.tickerCount.textContent = `${ids.length.toLocaleString('en-US')} ETFs`;
   renderSubtitle();
 }
@@ -4483,6 +4509,8 @@ const RESET_ITEMS: ResetItem[] = [
   { id: 'sticky', label: 'Sticky #', keys: [STICKY_RANK_KEY], reset: () => { state.stickyRank = false; } },
   { id: 'remembered-table-views', label: 'Remembered table views', keys: [VIEW_KEY], reset: () => { savedViews = {}; settledViewTabs.clear(); restoringViewTabs.clear(); clearTimeout(saveViewTimer); } },
   { id: 'blacklist', label: 'Blacklist', keys: [BLACKLIST_KEY], reset: () => { state.blacklist.clear(); blacklistVersion += 1; } },
+  { id: 'screener', label: 'Screener: chosen presets and edits (own presets are kept)', keys: [SCREENER_KEYS.screener], reset: () => screener.reset() },
+  { id: 'screener-variants', label: 'Screener horizons (Stable growth 1Y to 10Y)', keys: [SCREENER_KEYS.variants], reset: () => screener.resetVariants() },
 ];
 
 /** Resets the chosen items to the first-visit state at once. */
@@ -4741,7 +4769,7 @@ function currentExportRows(): { headers: string[]; rows: string[][]; scope: stri
   const ids = catalogIds();
   const cell = (name: string, id: number): string => (s ? numberCell(nanToNull(s.num[name][id])) : '');
   return {
-    headers: ['#', 'Selected', 'Ticker', 'Brand', 'Fund Name', 'Type', 'NAV', '52W Range (%)', '52W Low ($)', '52W High ($)', 'Net Assets ($)', 'Expense (%)', 'Dividend Yield (%)', 'SEC Yield (%)', 'Yield Basis', 'Frequency', 'YTD Return (%)', 'TR 1Y (%)', 'TR 3Y (%)', 'TR 5Y (%)', 'TR 10Y (%)', 'CAGR 3Y (%)', 'CAGR 5Y (%)', 'CAGR 10Y (%)', 'SI Ann. (%)', 'Returns Source', 'Return As Of', 'Inception', 'Holdings', 'History', 'As Of'],
+    headers: ['#', 'Selected', 'Ticker', 'Brand', 'Fund Name', 'Type', 'Entry Score', 'Dividend Score', 'Why', 'NAV', '52W Range (%)', '52W Low ($)', '52W High ($)', 'Net Assets ($)', 'Expense (%)', 'Dividend Yield (%)', 'SEC Yield (%)', 'Yield Basis', 'Frequency', 'YTD Return (%)', 'TR 1Y (%)', 'TR 3Y (%)', 'TR 5Y (%)', 'TR 10Y (%)', 'CAGR 3Y (%)', 'CAGR 5Y (%)', 'CAGR 10Y (%)', 'SI Ann. (%)', 'Returns Source', 'Return As Of', 'Inception', 'Holdings', 'History', 'As Of'],
     rows: s ? ids.map((id, index) => {
       const raw = s.raw[id];
       const metrics = raw.metrics || {};
@@ -4752,6 +4780,9 @@ function currentExportRows(): { headers: string[]; rows: string[][]; scope: stri
         s.brandText[id],
         s.name[id],
         s.categoryText[id],
+        cell('scoreEntry', id),
+        cell('scoreDividend', id),
+        scoringWhy(id),
         raw.nav || '',
         cell('range52w', id),
         cell('week52Low', id),
@@ -5177,6 +5208,158 @@ function bindEvents(): void {
   }
 }
 
+// =========================================================================
+// 13. ETF screener and scores (owner 2026-11-16, stage H2): the Stocks core panel over the hub table
+// =========================================================================
+// Base presets: dist/presets (copied from node_modules/stocks at build and serve time), only those that apply to ETFs; the hub has
+// no mine list, so Mine is left out. Own presets live in this browser (Export and Import). Scores: the core scoring over the ETFs
+// of all 29 brands (category percentiles), Entry and Dividend plus Why in the table. No scores snapshot yet (stage H3)
+
+const SCORING_URL = './scoring.json';
+const SCORE_NUM_KEYS = ['scoreEntry', 'scoreDividend', 'statusScore'];
+// English only: the hub has no language switch, and the Stocks locale key is shared on daggerok.github.io
+const hubI18n = createI18n({ storage: null });
+
+let scoringConfig: ScoringConfig | null = null; // node_modules/stocks/src/core/scoring/config.json as dist/scoring.json
+let scored: { version: number; universe: Universe; rows: ScreenerRow[]; result: ScoringResult | null } | null = null;
+let whyCache: { version: number; texts: string[] } | null = null;
+
+/** A base preset the hub shows: it applies to ETFs and does not need the owner's list (Mine reads the Stocks feed) */
+function etfPreset(p: Preset): boolean {
+  return p.appliesTo.indexOf('etf') >= 0 && !p.conditions.some(c => c.metric === 'isMine');
+}
+
+/** The engine universe over the store rows (a result index is a store id), scored once per store version; fills the score columns */
+function scoredUniverse(): Universe | null {
+  const s = store;
+  if (!s) return null;
+  if (scored && scored.version === s.version) return scored.universe;
+  const rows = s.raw.map((raw: any) => etfRow(raw));
+  let result: ScoringResult | null = null;
+  let universe: Universe | null = null;
+  const config = scoringConfig;
+  if (config) {
+    try {
+      result = computeScoring(createUniverse(rows), config);
+      universe = createUniverse(withScoreMetrics(rows, result));
+      const r = result;
+      r.rows.forEach((row, i) => {
+        s.num.scoreEntry[i] = row.scores.entry === null ? NaN : row.scores.entry;
+        s.num.scoreDividend[i] = row.scores.dividend === null ? NaN : row.scores.dividend;
+        s.num.statusScore[i] = row.statusScore === null ? NaN : row.statusScore;
+      });
+    } catch (error) {
+      result = null;
+      console.warn('Scoring failed:', error instanceof Error ? error.message : error);
+    }
+  }
+  scored = { version: s.version, universe: universe || createUniverse(rows), rows, result };
+  return scored.universe;
+}
+
+/** Why of a row in English (archetype, status rule, notes), cached per store version */
+function scoringWhy(id: number): string {
+  const s = store;
+  scoredUniverse();
+  const sc = scored;
+  const config = scoringConfig;
+  if (!s || !sc || !sc.result || !config) return '';
+  if (!whyCache || whyCache.version !== s.version) whyCache = { version: s.version, texts: new Array(s.n) };
+  const cache = whyCache;
+  if (cache.texts[id] === undefined) {
+    const r = sc.result.rows[id];
+    cache.texts[id] = r && sc.rows[id] ? whyText(config, r, sc.rows[id], 'en') : '';
+  }
+  return cache.texts[id];
+}
+
+function scoreText(value: number): string {
+  return Number.isFinite(value) ? String(Math.round(value)) : DASH;
+}
+
+/** A score 0-100 colored by the thresholds of the scoring config: green from colors.good, red below colors.bad */
+function scoreBadgeHtml(value: number): string {
+  if (!Number.isFinite(value)) return DASH;
+  const colors = scoringConfig ? scoringConfig.colors : { good: 70, bad: 40 };
+  const cls = value >= colors.good ? 'is-good' : value < colors.bad ? 'is-bad' : 'is-mid';
+  return `<span class="scr-score ${cls}">${scoreText(value)}</span>`;
+}
+
+function whyCellHtml(id: number): string {
+  const text = scoringWhy(id);
+  const tip = text ? ` title="${escapeHtml(text.split('; ').join('\n'))}"` : '';
+  return `<td class="py-2.5 px-4 scr-why text-slate-600 dark:text-slate-300"${tip}>${escapeHtml(text || DASH)}</td>`;
+}
+
+const screener = createScreenerUi({
+  storagePrefix: SCREENER_PREFIX,
+  panelId: 'screener-panel',
+  types: ['etf'],
+  presetsUrl: './presets/',
+  ownPresetsUrl: '', // no user-data/ in the hub: own presets live in the browser, Export and Import move them
+  peersUrl: '',
+  peers: false,
+  presetFilter: etfPreset,
+  t: (key, params) => hubI18n.t(key, params),
+  pick: (text, locale) => pickText(text, locale || 'en'),
+  getLocale: () => hubI18n.getLocale(),
+  escapeHtml, copyText, downloadText,
+  storageGetJson: lsGetJson,
+  storageSet: lsSet,
+  fetchJson: url => fetchJson(url),
+  universe: () => scoredUniverse(),
+  rowsVersion: () => (store ? store.version : 0),
+  rowCount: () => (store ? store.n : 0),
+  snapshotResult: () => null, // no scores snapshot yet (stage H3): every preset is evaluated in the browser
+  knownTickers: () => [],
+  rerender: () => render(),
+  typeChosen: () => {},
+  statusParts: () => screenerStatusParts(),
+  peersChanging: () => {},
+  peersChanged: () => {},
+});
+
+/** The status line of the panel: how many ETFs pass the chosen chips (before the brand, category, search and column filters) */
+function screenerStatusParts(): string[] {
+  if (!Object.keys(screener.scr.chips).length) return [];
+  const mask = screener.screenMask();
+  if (!mask || !store) return [];
+  let passed = 0;
+  for (let i = 0; i < mask.length; i++) passed += mask[i];
+  return [`${passed.toLocaleString('en-US')} of ${store.n.toLocaleString('en-US')} ETFs pass`];
+}
+
+/** Names of the chosen chips for the status line under the table ("Gold, not Volatile swings") */
+function screenerChoiceText(): string {
+  const chips = screener.scr.chips;
+  const names = Object.keys(chips).map(id => {
+    const p = screener.effectivePreset(id);
+    if (!p) return '';
+    const title = pickText(p.title, 'en');
+    return chips[id] === 'out' ? `not ${title}` : title;
+  }).filter(Boolean);
+  return names.join(screener.scr.any ? ' or ' : ', ');
+}
+
+/** The scoring config next to the page; a missing or invalid one leaves the score columns empty with a warning */
+async function loadScoringConfig(): Promise<void> {
+  try {
+    const config = await fetchJson(SCORING_URL);
+    const problems = validateScoringConfig(config);
+    if (problems.length) throw new Error(problems.slice(0, 5).join('; '));
+    scoringConfig = config;
+  } catch (error) {
+    console.warn(`Scoring config unavailable: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+async function loadScreener(): Promise<void> {
+  await Promise.all([loadScoringConfig(), screener.loadPresets()]);
+  const message = screener.applyHashPreset();
+  if (store && scoringConfig) { rebuildDirty = true; rebuildNow(); } // new store version: the score columns are filled and their types detected
+  screener.changed(message);
+}
+
 function init(): void {
   restoreSelectedEtfs();
   restoreBlacklist();
@@ -5186,9 +5369,13 @@ function init(): void {
   restoreSearches();
   restoreColumnFilters();
   restoreTabSorts();
+  screener.restore();
   applySortForTab(state.activeTab);
   applyTheme(lsGet(THEME_KEY) === 'dark');
   bindEvents();
+  screener.bindPanel(el.screenerPanel);
+  screener.render();
+  void loadScreener();
   syncSearchInput();
   fitTableHeight();
   renderFilters();
@@ -5410,6 +5597,6 @@ init();
 
 // ---- browser test hooks: the module scope hides these from the page, the shared UI tests (ETFs/.claude/tools/ui-std) reach them through window ----
 
-Object.assign(window, { BRANDS, CATALOG_COLUMNS, COLUMN_TYPES_KEY, activateFund, afterSelectionChange, catalogCellText, catalogColumnType, catalogIds, copyText, currentExportRows, downloadText, filterExpressionFor, fundMetaCache, getDedupedWatchlistRows, getVisibleWatchlistRows, gridTypeCache, isHoldingsLoading, keyTicker, menuColumns, persistColumnFilters, persistViewFilters, render, setCatalogColumnStyle, sheetKey, sheetState, state });
+Object.assign(window, { screener, scoredUniverse, scoringWhy, BRANDS, CATALOG_COLUMNS, COLUMN_TYPES_KEY, activateFund, afterSelectionChange, catalogCellText, catalogColumnType, catalogIds, copyText, currentExportRows, downloadText, filterExpressionFor, fundMetaCache, getDedupedWatchlistRows, getVisibleWatchlistRows, gridTypeCache, isHoldingsLoading, keyTicker, menuColumns, persistColumnFilters, persistViewFilters, render, setCatalogColumnStyle, sheetKey, sheetState, state });
 Object.defineProperty(window, 'blacklistVersion', { get: () => blacklistVersion, set: value => { blacklistVersion = value; } });
 Object.defineProperty(window, 'store', { get: () => store, set: value => { store = value; } });

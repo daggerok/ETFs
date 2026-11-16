@@ -7,6 +7,7 @@
  * (see "postcss" in package.json). Same setup as daggerok/Stocks, daggerok/csv and daggerok/options-desk.
  *
  *  - `@import "tailwindcss"`: preflight, theme and the utilities used in index.html and main.tsx.
+ *  - `@import "stocks/src/core/screener-ui/screener.css"`: the ETF screener panel and score cells of the Stocks core (git dependency).
  *  - `@custom-variant dark`: class based dark mode (`html.dark`, toggled by the theme init in index.html).
  *  - `@theme`: the Inter font family.
  *  - compat layer: Tailwind v3 -> v4 defaults the markup relies on (border color, button cursor).
@@ -14,6 +15,7 @@
  * ============================================================================
  */
 @import "tailwindcss";
+@import "stocks/src/core/screener-ui/screener.css";
 
 @custom-variant dark (&:where(.dark, .dark *));
 
@@ -523,3 +525,6 @@ textarea.ui-input{height:auto;padding:.5rem .75rem;line-height:1.4}
 .am-sep{height:1px;margin:.25rem .125rem;background:var(--ui-line-soft);flex:none}
 @media (prefers-reduced-motion:reduce){.am-panel{transition:none}}
 .am-upload.dz-active{background:var(--ui-accent-soft);box-shadow:none;outline:1px dashed var(--ui-accent-ring);outline-offset:-1px}
+
+/* ETF screener head (Stocks core panel): no type switch and no Peers button, so both sides of the centered title are narrower */
+#screener-panel{--scr-side-width:13.5rem}

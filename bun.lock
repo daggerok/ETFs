@@ -3,6 +3,9 @@
   "configVersion": 1,
   "workspaces": {
     "": {
+      "dependencies": {
+        "stocks": "github:daggerok/Stocks#70a7091749b164d101e66c13b8e632a648663217",
+      },
       "devDependencies": {
         "@parcel/transformer-sass": "2.16.4",
         "@tailwindcss/postcss": "4.3.3",
@@ -482,6 +485,8 @@
     "semver": ["semver@7.7.2", "", { "bin": { "semver": "bin/semver.js" } }, "sha512-RF0Fw+rO5AMf9MAyaRXI4AV0Ulj5lMHqVxxdSgiVbixSCXoEmmX/jk0CuJw4+3SqroYO9VoUh+HcuJivvtJemA=="],
 
     "source-map-js": ["source-map-js@1.2.2", "", {}, "sha512-KGj/8Y43x35aZVDtt+J4mK1hoLGHULMYfSkODJNQjNDC3oW1PqPoxMwo0pLUsWM/UEGzON/NxeHywEfNXNP3Vw=="],
+
+    "stocks": ["stocks@github:daggerok/Stocks#70a7091", {}, "daggerok-Stocks-70a7091", "sha512-pcjs4VAda4m7NighISwXVcPXInSPEn6NdE3H7AnvFNaWs2G389csbyIyzQ3e9To9nw/Y2HQZRi2QKjKUL99xfA=="],
 
     "supports-color": ["supports-color@7.2.0", "", { "dependencies": { "has-flag": "^4.0.0" } }, "sha512-qpCAvRl9stuOHveKsn7HncJRvv501qIacKzQlO/+Lwxc9+0q2wLyv4Dfvt80/DPn2pqOBsJdDiogXGR9+OvwRw=="],
 
