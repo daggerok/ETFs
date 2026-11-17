@@ -531,3 +531,9 @@ textarea.ui-input{height:auto;padding:.5rem .75rem;line-height:1.4}
 
 /* ETF screener head (Stocks core panel): no type switch and no Peers button, so both sides of the centered title are narrower */
 #screener-panel{--scr-side-width:13.5rem}
+/* the screener panel keeps the Stocks look (owner 2026-11-17: "I Like Stocks style more"): 12px panel padding, pill tool buttons of 12px text */
+#screener-panel.ui-panel{padding:.75rem}
+#screener-panel .dd-act{height:auto;gap:normal;padding:.3rem .65rem;border-radius:9999px;font-size:.75rem;font-weight:500;line-height:1.125rem;transition:background-color .12s,border-color .12s}
+#screener-panel .dd-act:hover{background:var(--ui-hover-2);border-color:var(--ui-line-2)}
+@media (max-width:639px){#screener-panel .dd-act{padding:.45rem .75rem;font-size:.8125rem}}
+#screener-panel .scr-input{height:auto;padding:.2rem .4rem}
