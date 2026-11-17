@@ -93,7 +93,7 @@ const COLUMN_FILTERS_KEY = 'etf-hub-column-filters';
 const COLUMN_TYPES_KEY = 'etf-hub-column-types';
 const SHOW_FILTERS_KEY = 'etf-hub-show-filters';
 const STICKY_RANK_KEY = 'etf-hub-sticky-rank';
-const SCREENER_PREFIX = 'etfs'; // ETF screener: localStorage etfs-screener, etfs-screener-variants, etfs-screener-pickers, etfs-own-presets
+const SCREENER_PREFIX = 'etfs'; // ETF screener: localStorage etfs-screener, etfs-screener-variants, etfs-screener-pickers, etfs-screener-collapsed, etfs-own-presets
 const SCREENER_KEYS = screenerStorageKeys(SCREENER_PREFIX);
 const FILTER_DEBOUNCE_MS = 250;
 const GITHUB_PAGES_ORIGIN = 'https://daggerok.github.io/';
@@ -4517,6 +4517,7 @@ const RESET_ITEMS: ResetItem[] = [
   { id: 'screener', label: 'Screener: chosen presets and edits (own presets are kept)', keys: [SCREENER_KEYS.screener], reset: () => screener.reset() },
   { id: 'screener-variants', label: 'Screener horizons (Stable growth 1Y to 10Y)', keys: [SCREENER_KEYS.variants], reset: () => screener.resetVariants() },
   { id: 'screener-pickers', label: 'Screener chip choices (benchmark, horizon, level)', keys: [SCREENER_KEYS.pickers], reset: () => screener.resetPickers() },
+  { id: 'screener-collapsed', label: 'Screener panel collapsed (back to shown)', keys: [SCREENER_KEYS.collapsed], reset: () => screener.resetCollapsed() },
 ];
 
 /** Resets the chosen items to the first-visit state at once. */
@@ -5328,6 +5329,7 @@ const screener = createScreenerUi({
   headNote: () => marketStateHtml(),
   peersChanging: () => {},
   peersChanged: () => {},
+  onCollapse: () => syncScreenerToggle(),
 });
 
 /** The status line of the panel: how many ETFs pass the chosen chips (before the brand, category, search and column filters) */
@@ -5580,6 +5582,27 @@ function setupActionsMenu(): void {
 }
 setupActionsMenu();
 
+/**
+ * The 🔍 button right before ☰ (owner 2026-11-16, the same as Stocks): collapses and expands the screener panel like its SCREENER title;
+ * pressed (light blue) while the panel is shown. Collapsing never changes the filtering: the head row keeps the status and the active presets
+ */
+function syncScreenerToggle(): void {
+  const button = document.getElementById('screener-toggle-btn');
+  if (!button) return;
+  const open = !screener.isCollapsed();
+  const label = hubI18n.t(open ? 'screener.collapse' : 'screener.expand');
+  button.setAttribute('aria-expanded', String(open));
+  button.classList.toggle('is-on', open);
+  button.setAttribute('aria-label', label);
+  button.setAttribute('title', label);
+}
+function setupScreenerToggle(): void {
+  const button = document.getElementById('screener-toggle-btn');
+  if (button) button.addEventListener('click', () => screener.toggleCollapsed());
+  syncScreenerToggle();
+}
+setupScreenerToggle();
+
 init();
 
 // ---- header summary popover: hover, focus or click on the stock count opens it ----
@@ -5641,6 +5664,6 @@ init();
 
 // ---- browser test hooks: the module scope hides these from the page, the shared UI tests (ETFs/.claude/tools/ui-std) reach them through window ----
 
-Object.assign(window, { screener, scoredUniverse, scoringWhy, BRANDS, CATALOG_COLUMNS, COLUMN_TYPES_KEY, activateFund, afterSelectionChange, catalogCellText, catalogColumnType, catalogIds, copyText, currentExportRows, downloadText, filterExpressionFor, fundMetaCache, getDedupedWatchlistRows, getVisibleWatchlistRows, gridTypeCache, isHoldingsLoading, keyTicker, menuColumns, persistColumnFilters, persistViewFilters, render, setCatalogColumnStyle, sheetKey, sheetState, state });
+Object.assign(window, { screener, applyClear, scoredUniverse, scoringWhy, BRANDS, CATALOG_COLUMNS, COLUMN_TYPES_KEY, activateFund, afterSelectionChange, catalogCellText, catalogColumnType, catalogIds, copyText, currentExportRows, downloadText, filterExpressionFor, fundMetaCache, getDedupedWatchlistRows, getVisibleWatchlistRows, gridTypeCache, isHoldingsLoading, keyTicker, menuColumns, persistColumnFilters, persistViewFilters, render, setCatalogColumnStyle, sheetKey, sheetState, state });
 Object.defineProperty(window, 'blacklistVersion', { get: () => blacklistVersion, set: value => { blacklistVersion = value; } });
 Object.defineProperty(window, 'store', { get: () => store, set: value => { store = value; } });
