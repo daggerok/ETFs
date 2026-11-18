@@ -93,7 +93,7 @@ const COLUMN_FILTERS_KEY = 'etf-hub-column-filters';
 const COLUMN_TYPES_KEY = 'etf-hub-column-types';
 const SHOW_FILTERS_KEY = 'etf-hub-show-filters';
 const STICKY_RANK_KEY = 'etf-hub-sticky-rank';
-const SCREENER_PREFIX = 'etfs'; // ETF screener: localStorage etfs-screener, etfs-screener-variants, etfs-screener-pickers, etfs-screener-collapsed, etfs-screener-hidden, etfs-own-presets
+const SCREENER_PREFIX = 'etfs'; // ETF screener: localStorage etfs-screener, etfs-screener-variants, etfs-screener-pickers, etfs-screener-collapsed, etfs-screener-shown, etfs-own-presets
 const SCREENER_KEYS = screenerStorageKeys(SCREENER_PREFIX);
 const FILTER_DEBOUNCE_MS = 250;
 const GITHUB_PAGES_ORIGIN = 'https://daggerok.github.io/';
@@ -4518,7 +4518,7 @@ const RESET_ITEMS: ResetItem[] = [
   { id: 'screener-variants', label: 'Screener horizons (Stable growth 1Y to 10Y)', keys: [SCREENER_KEYS.variants], reset: () => screener.resetVariants() },
   { id: 'screener-pickers', label: 'Screener chip choices (benchmark, horizon, level)', keys: [SCREENER_KEYS.pickers], reset: () => screener.resetPickers() },
   { id: 'screener-collapsed', label: 'Screener panel collapsed (back to shown)', keys: [SCREENER_KEYS.collapsed], reset: () => screener.resetCollapsed() },
-  { id: 'screener-hidden', label: 'Screener panel hidden (back to shown)', keys: [SCREENER_KEYS.hidden], reset: () => screener.resetHidden() },
+  { id: 'screener-shown', label: 'Screener panel shown (back to hidden)', keys: [SCREENER_KEYS.shown], reset: () => screener.resetHidden() },
 ];
 
 /** Resets the chosen items to the first-visit state at once. */
