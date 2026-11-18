@@ -105,7 +105,7 @@
           <span id="load-progress" class="empty:hidden text-xs text-slate-500 dark:text-slate-400" aria-live="polite"></span>
           <!-- Actions menu (☰ at the right end of the toolbar, owner 2026-11-15): the action buttons keep their ids and handlers, setupActionsMenu() in main.tsx opens and closes it -->
           <div class="am-root">
-            <button type="button" id="screener-toggle-btn" class="ui-btn ui-icon am-trigger scr-toggle" aria-expanded="true" aria-controls="screener-panel" aria-label="Hide the screener panel" title="Hide the screener panel">🔍</button>
+            <button type="button" id="screener-toggle-btn" class="ui-btn ui-icon am-trigger scr-toggle" aria-expanded="false" aria-controls="screener-panel" aria-label="Show the screener panel" title="Show the screener panel">🔍</button>
             <button type="button" id="actions-btn" class="ui-btn ui-icon am-trigger" aria-haspopup="menu" aria-expanded="false" aria-controls="actions-panel" aria-label="Actions" title="Actions: copy tickers, export, clear, blacklist">☰</button>
             <div id="actions-panel" class="am-panel ui-pop" role="menu" aria-label="Actions" hidden>
               <button id="copy-btn" disabled class="am-item dd-opt am-copy" role="menuitem" data-am-keep>Copy Tickers</button>
@@ -121,7 +121,7 @@
       </div>
 
       <!-- ETF screener: presets as chips, the condition editor with the funnel (Stocks core panel, rendered by main.tsx) -->
-      <section id="screener-panel" class="ui-panel scr-panel" aria-label="Screener"></section>
+      <section id="screener-panel" class="is-hidden ui-panel scr-panel" aria-label="Screener"></section>
 
       <div id="blacklist-panel" class="ui-panel">
         <div class="flex flex-col sm:flex-row sm:items-center gap-2.5">
