@@ -4,7 +4,7 @@
   "workspaces": {
     "": {
       "dependencies": {
-        "stocks": "github:daggerok/Stocks#298b770e755ec782fd2b7b0013a1eab1af07f8f4",
+        "stocks": "github:daggerok/Stocks#eefefebfe4d54b22b27ce8fc371ab7bc123f5559",
       },
       "devDependencies": {
         "@parcel/transformer-sass": "2.16.4",
@@ -486,7 +486,7 @@
 
     "source-map-js": ["source-map-js@1.2.2", "", {}, "sha512-KGj/8Y43x35aZVDtt+J4mK1hoLGHULMYfSkODJNQjNDC3oW1PqPoxMwo0pLUsWM/UEGzON/NxeHywEfNXNP3Vw=="],
 
-    "stocks": ["stocks@github:daggerok/Stocks#298b770", {}, "daggerok-Stocks-298b770", "sha512-LHr8GuViHwXIojBGEO3ykC15NdwW/h2y8smGQKTh7SAcRto44nBDPLzLfP7LgB6z7HY/PKDdw3kjG+jwhRdMZA=="],
+    "stocks": ["stocks@github:daggerok/Stocks#eefefeb", {}, "daggerok-Stocks-eefefeb", "sha512-Wgh4k/UOB2NNObqIVrtG2RpK8JD0eTiECPmAvZif2jBJHCwX/a1YL8fYa0KadzwgadtLwb4Q2Y05Lfo8Ho0B6g=="],
 
     "supports-color": ["supports-color@7.2.0", "", { "dependencies": { "has-flag": "^4.0.0" } }, "sha512-qpCAvRl9stuOHveKsn7HncJRvv501qIacKzQlO/+Lwxc9+0q2wLyv4Dfvt80/DPn2pqOBsJdDiogXGR9+OvwRw=="],
 
