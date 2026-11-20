@@ -31,7 +31,7 @@
   "author": "Maksim Kostromin / GitHub: daggerok",
   "license": "MIT",
   "dependencies": {
-    "stocks": "github:daggerok/Stocks#fb50941466915a619149277c3130e4fe439ea695"
+    "stocks": "github:daggerok/Stocks#b1b5fd5b3ec20bb12280d5a24127dbed17cfe859"
   },
   "devDependencies": {
     "@parcel/transformer-sass": "2.16.4",
