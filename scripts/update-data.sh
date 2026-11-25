@@ -13,7 +13,7 @@
 # empty (./scripts/update-data.ts --restore-from --if-newer, like its workflow), run the updater (with --signals when its workflow does), then publish it
 # with ./scripts/update-data.ts --publish (skipped with --no-push).
 # Each repo prints when it started and finished and how long it took; the summary repeats it per repo and for the run.
-# -j N (--jobs N) updates up to N repos at the same time (owner 2026-11-19); every output line then starts with [<repo>].
+# -p N (--parallel N, also -j N, --jobs N) updates up to N repos at the same time (owner 2026-11-19, -p 2026-11-24); every output line then starts with [<repo>].
 # The same file is ETFs/scripts/update-data.sh (ETFs hub) and scripts/update-data.sh (investments): change both together.
 
 set -uo pipefail
@@ -34,9 +34,11 @@ Usage: ./scripts/update-data.sh [options] [repo ...]
 
 Options:
   --no-push                 commit the new data but do not push it
-  -j N, --jobs N            update up to N repos at the same time (default 1); each output line starts with [<repo>].
+  -p N, --parallel N, -j N, --jobs N
+                            update up to N repos at the same time (default 1); each output line starts with [<repo>].
+                            Also -pN, -jN, --parallel=N, --jobs=N
                             Keep N small (3-4): the repos share the SEC and Yahoo rate limits of your IP
-                              ./scripts/update-data.sh -j 4
+                              ./scripts/update-data.sh -p 4
   -h, --help                show this help
 
 Update controls are environment variables passed to every repo's ./scripts/update-data.ts, e.g.
@@ -54,8 +56,9 @@ SELECTED=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --no-push) PUSH=0 ;;
-    -j|--jobs) shift; JOBS="${1:-}"; [[ "$JOBS" =~ ^[1-9][0-9]*$ ]] || die "-j needs a positive number of parallel repos" ;;
-    -j[1-9]*) JOBS="${1#-j}"; [[ "$JOBS" =~ ^[1-9][0-9]*$ ]] || die "-j needs a positive number of parallel repos" ;;
+    -p|--parallel|-j|--jobs) shift; JOBS="${1:-}"; [[ "$JOBS" =~ ^[1-9][0-9]*$ ]] || die "-p needs a positive number of parallel repos" ;;
+    --parallel=*|--jobs=*) JOBS="${1#*=}"; [[ "$JOBS" =~ ^[1-9][0-9]*$ ]] || die "-p needs a positive number of parallel repos" ;;
+    -p[1-9]*|-j[1-9]*) JOBS="${1#-?}"; [[ "$JOBS" =~ ^[1-9][0-9]*$ ]] || die "-p needs a positive number of parallel repos" ;;
     -h|--help) usage; exit 0 ;;
     -*) die "unknown option: $1 (see ./scripts/update-data.sh --help)" ;;
     *)
