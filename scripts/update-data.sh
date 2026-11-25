@@ -10,8 +10,9 @@
 # commit never came): they are discarded before the pull, since the updater regenerates them anyway.
 # A repo whose feed is not in git (Stocks: update-data.yml has no git add/commit and publishes with update-data.ts
 # --publish) commits nothing: pull, install, restore the published feed when it is newer than api/<feed> or that is
-# empty (./scripts/update-data.ts --restore-from --if-newer, like its workflow), run the updater (with --signals when its workflow does), then publish it
-# with ./scripts/update-data.ts --publish (skipped with --no-push).
+# empty (./scripts/update-data.ts --restore-from --if-newer, like its workflow), run the updater (with --signals when
+# its workflow does), remove the folders of delisted stocks (./scripts/update-data.ts --prune), then publish it with
+# ./scripts/update-data.ts --publish (skipped with --no-push).
 # Each repo prints when it started and finished and how long it took; the summary repeats it per repo and for the run.
 # -p N (--parallel N, also -j N, --jobs N) updates up to N repos at the same time (owner 2026-11-19, -p 2026-11-24); every output line then starts with [<repo>].
 # The same file is ETFs/scripts/update-data.sh (ETFs hub) and scripts/update-data.sh (investments): change both together.
@@ -130,6 +131,11 @@ update_local_only() {
   bun ./scripts/update-data.ts ${signals[@]+"${signals[@]}"}
   code=$?
   [ $code -eq 0 ] || { fail "update-data.ts exited $code: $feed updated locally, not published"; return $code; }
+  # the folders of delisted stocks the index dropped (no price for 60 days): removed on every run, not by hand once a quarter
+  if grep -q -- "'--prune'" scripts/update-data.ts; then
+    echo "Removing delisted folders (./scripts/update-data.ts --prune) ..."
+    bun ./scripts/update-data.ts --prune || echo "update-data.ts --prune failed: the delisted folders stay, publishing anyway"
+  fi
   if [ "$PUSH" -eq 0 ]; then UPDATE_STATE="$feed updated locally, not published (--no-push)"; return 0; fi
   echo "Publishing (./scripts/update-data.ts --publish) ..."
   bun ./scripts/update-data.ts --publish || { fail "$feed updated locally, update-data.ts --publish failed"; return 1; }
