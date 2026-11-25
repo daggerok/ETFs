@@ -9,8 +9,8 @@
 # Uncommitted changes inside the feed folder only are the leftover of an interrupted run (the updater writes, the
 # commit never came): they are discarded before the pull, since the updater regenerates them anyway.
 # A repo whose feed is not in git (Stocks: update-data.yml has no git add/commit and publishes with update-data.ts
-# --publish) commits nothing: pull, install, restore the published feed when api/<feed> is empty
-# (./scripts/update-data.ts --restore-from), run the updater (with --signals when its workflow does), then publish it
+# --publish) commits nothing: pull, install, restore the published feed when it is newer than api/<feed> or that is
+# empty (./scripts/update-data.ts --restore-from --if-newer, like its workflow), run the updater (with --signals when its workflow does), then publish it
 # with ./scripts/update-data.ts --publish (skipped with --no-push).
 # Each repo prints when it started and finished and how long it took; the summary repeats it per repo and for the run.
 # -j N (--jobs N) updates up to N repos at the same time (owner 2026-11-19); every output line then starts with [<repo>].
@@ -118,10 +118,10 @@ update_local_only() {
   git pull --ff-only origin main || { fail "git pull --ff-only failed (local main diverged from origin?)"; return 1; }
   echo "Installing packages..."
   bun install --frozen-lockfile || { fail "bun install --frozen-lockfile failed"; return 1; }
-  if [ ! -f "$feed/index.json" ]; then
-    echo "$feed is empty: restoring the published feed first (./scripts/update-data.ts --restore-from) ..."
-    bun ./scripts/update-data.ts --restore-from || { fail "restoring the published $feed failed"; return 1; }
-  fi
+  # like the workflow: start from the published feed when it is newer than the local one (a workflow run on GitHub)
+  # or the local one is empty; an up to date local feed is kept as it is
+  echo "Restoring the published feed when it is newer (./scripts/update-data.ts --restore-from --if-newer) ..."
+  bun ./scripts/update-data.ts --restore-from --if-newer || { fail "restoring the published $feed failed"; return 1; }
   echo "Running ./scripts/update-data.ts ${signals[*]-}..."
   bun ./scripts/update-data.ts ${signals[@]+"${signals[@]}"}
   code=$?
