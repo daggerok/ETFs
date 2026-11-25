@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Refresh the data of the repos cloned in the parent folder of scripts/ (the ETFs hub: the ETF brands; investments:
-# Stocks and the ETF brands; a repo without data, like the hub itself, is not listed), one repo after another,
+# Stocks and the ETF brands; a repo without data, like the hub itself, is not listed), up to 3 repos at a time,
 # with each repo's own updater, then commit and push it the way its update-data.yml workflow does:
 #   pull main fast-forward -> bun install --frozen-lockfile -> ./scripts/update-data.ts
 #   -> git add api/<feed> -> commit "chore(data): update <Brand> ETF data" -> push (rebase and retry when main moved)
@@ -27,7 +27,7 @@ usage() {
   cat <<USAGE
 Usage: ./scripts/update-data.sh [options] [repo ...]
 
-  (no arguments)            update the data of every cloned repo, one after another
+  (no arguments)            update the data of every cloned repo, up to 3 at a time
   repo ...                  only these repos, separated by spaces and/or commas (case-insensitive):
                               ./scripts/update-data.sh VanEck Tema
                               ./scripts/update-data.sh VanEck,Tema
@@ -35,7 +35,8 @@ Usage: ./scripts/update-data.sh [options] [repo ...]
 Options:
   --no-push                 commit the new data but do not push it
   -p N, --parallel N, -j N, --jobs N
-                            update up to N repos at the same time (default 1); each output line starts with [<repo>].
+                            update up to N repos at the same time (default 3), each output line then starts with
+                            [<repo>]; -p 1 updates one after another in plain sections, like a single repo does
                             Also -pN, -jN, --parallel=N, --jobs=N
                             Keep N small (3-4): the repos share the SEC and Yahoo rate limits of your IP
                               ./scripts/update-data.sh -p 4
@@ -51,7 +52,7 @@ USAGE
 die() { echo "update-data.sh: $*" >&2; exit 2; }
 
 PUSH=1
-JOBS=1
+JOBS=3
 SELECTED=()
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -194,7 +195,8 @@ dur() { local t=$1; if [ "$t" -ge 3600 ]; then printf '%dh%02dm%02ds' $((t / 360
   elif [ "$t" -ge 60 ]; then printf '%dm%02ds' $((t / 60)) $((t % 60)); else printf '%ds' "$t"; fi; }
 now() { date '+%Y-%m-%d %H:%M:%S'; }
 RUN_START=$(now); RUN_SECONDS=$SECONDS
-if [ "$JOBS" -gt 1 ]; then
+# one repo, or -p 1: the plain sections, one after another
+if [ "$JOBS" -gt 1 ] && [ ${#LIST[@]} -gt 1 ]; then
   # parallel: each repo in its own background job with prefixed output; the results are read from $OUT afterwards
   echo "Updating the data of ${#LIST[@]} repo(s), up to $JOBS at a time, started $RUN_START ..."
   for repo in "${LIST[@]}"; do
